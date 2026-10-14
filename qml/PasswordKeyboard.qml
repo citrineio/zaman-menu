@@ -10,19 +10,19 @@ Item {
     property bool masked: true
     property bool digitsOnly: false
     property int selected: 0
-    property int layout: 0
-    property bool capitals: false
-    readonly property string letters: capitals
-        ? "1234567890QWERTYUIOPASDFGHJKL-ZXCVBNM,./"
-        : "1234567890qwertyuiopasdfghjkl-zxcvbnm,./"
+    property int view: 0 // lower | upper | symbols
+    readonly property string letters: view === 1
+        ? "QWERTYUIOPASDFGHJKL-ZXCVBNM,./1234567890"
+        : "qwertyuiopasdfghjkl-zxcvbnm,./1234567890"
     readonly property string symbols: "!@#$%^&*()_+{}[]<>?=\\|;:'\"`,.~/-01234567"
-    readonly property var characters: (digitsOnly ? "1234567890" : layout === 0 ? letters : symbols).split("")
+    readonly property var characters: (digitsOnly ? "1234567890" : view === 2 ? symbols : letters).split("")
     readonly property int characterRows: digitsOnly ? 1 : 4
     readonly property var actions: digitsOnly ? ["Delete", submitLabel]
-        : [capitals ? "abc" : "ABC", layout === 0 ? "#+=" : "Letters", "Space", "Delete", submitLabel]
+        : [view === 0 ? "ABC" : view === 1 ? "#+=" : "abc", "Space", "Delete", submitLabel]
     signal submitted(string password)
     function px(value) { return Math.round(value * uiScale); }
-    function reset() { secret = ""; selected = 0; layout = 0; capitals = false; }
+    function reset() { secret = ""; selected = 0; view = 0; }
+    function cycleView() { if (!digitsOnly) view = (view + 1) % 3; }
     function append(value) {
         // Printable credentials only; never log this string.
         if (/^[\x20-\x7e]+$/.test(value) && (!digitsOnly || /^[0-9]+$/.test(value)) && secret.length + value.length <= maxLength) secret += value;
@@ -40,10 +40,9 @@ Item {
     function activate() {
         if (selected < 40) append(characters[selected]);
         else if (digitsOnly) { if (selected === 40) erase(); else submitted(secret); }
-        else if (selected === 40) { capitals = !capitals; layout = 0; }
-        else if (selected === 41) layout = 1 - layout;
-        else if (selected === 42) append(" ");
-        else if (selected === 43) erase();
+        else if (selected === 40) cycleView();
+        else if (selected === 41) append(" ");
+        else if (selected === 42) erase();
         else submitted(secret);
     }
     Component.onDestruction: secret = ""
@@ -68,7 +67,8 @@ Item {
         }
         MenuText {
             width: parent.width; wrapMode: Text.WordWrap
-            text: "D-pad: choose key · A: enter · B: cancel\nKeyboard: type, Backspace to delete, Enter to " + keyboard.submitLabel.toLowerCase()
+            text: "D-pad: choose key · A: enter · B: cancel" + (keyboard.digitsOnly ? "" : " · Y: change keyboard")
+                + "\nKeyboard: type, Backspace to delete, Enter to " + keyboard.submitLabel.toLowerCase()
             font.pixelSize: keyboard.px(14); color: "#BBC6D3"
         }
         Grid {

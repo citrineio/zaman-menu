@@ -11,6 +11,7 @@ SERVICE = 'com.kawnelectro.Zaman.Session1'
 PATH = '/com/kawnelectro/Zaman/Session1'
 INTERFACE = SERVICE
 STATUS_SIGNATURE = '(ssssss)'
+INSTALLED_SIGNATURE = '(sssssb)'
 
 
 def emit(kind, **fields):
@@ -27,6 +28,9 @@ def log(message):
 
 def exit_game(call, emit_event=emit, clock=time.monotonic, pause=time.sleep, timeout=120):
     """call is already pinned to one unique sessiond bus owner."""
+    installed = call('InstalledGameStatus', INSTALLED_SIGNATURE)
+    if installed[3] in ('Starting', 'Running', 'Stopping', 'CleanupFailed'):
+        return exit_installed_game(call, installed, emit_event, clock, pause, timeout)
     deadline = clock() + timeout
     initial = call('Status', STATUS_SIGNATURE)
     identity = initial[1:4]
@@ -60,6 +64,34 @@ def exit_game(call, emit_event=emit, clock=time.monotonic, pause=time.sleep, tim
     raise RuntimeError('The game is still closing. Check its state before trying again.')
 
 
+def exit_installed_game(call, initial, emit_event=emit, clock=time.monotonic,
+                        pause=time.sleep, timeout=120):
+    generation, app = initial[:2]
+    if initial[3] in ('Starting', 'Running', 'CleanupFailed'):
+        if initial[3] != 'CleanupFailed':
+            foreground = call('ForegroundStatus', '(sss)')[0]
+            if foreground != 'game':
+                raise RuntimeError('Another Zaman screen has control. Return to the game before trying again.')
+        # One generation-bound request to the same unique D-Bus owner.
+        call('InstalledGameClose', '()', (generation,))
+        log('InstalledGameClose accepted for ' + app)
+    emit_event('exit-progress', message='Closing game…')
+    deadline = clock() + timeout
+    while clock() < deadline:
+        state = call('InstalledGameStatus', INSTALLED_SIGNATURE)
+        if state[:2] != (generation, app):
+            raise RuntimeError('The installed game changed while closing. No further exit request was sent.')
+        if state[3] == 'Exited':
+            emit_event('exit-result', ok=True, message='Game closed.')
+            return
+        if state[3] in ('Failed', 'CleanupFailed'):
+            raise RuntimeError(state[4] or 'The installed game could not be cleaned up.')
+        if state[3] not in ('Starting', 'Running', 'Stopping'):
+            raise RuntimeError('Unexpected installed game state: ' + state[3])
+        pause(0.5)
+    raise RuntimeError('The game is still closing. Check its state before trying again.')
+
+
 def power_action(call, kind, emit_event=emit, clock=time.monotonic, pause=time.sleep, timeout=120):
     method = {'reboot': 'Reboot', 'shutdown': 'Shutdown'}[kind]
     foreground = call('ForegroundStatus', '(sss)')[0]
@@ -75,6 +107,9 @@ def power_action(call, kind, emit_event=emit, clock=time.monotonic, pause=time.s
         state = call('Status', STATUS_SIGNATURE)
         if state[0] == 'Failed':
             raise RuntimeError(state[5] or 'The power request failed.')
+        installed = call('InstalledGameStatus', INSTALLED_SIGNATURE)
+        if installed[3] == 'CleanupFailed':
+            raise RuntimeError(installed[4] or 'Installed game cleanup failed; power was not completed.')
         pause(0.5)
     raise RuntimeError('The power request is still pending. Check the session state before trying again.')
 
@@ -120,7 +155,8 @@ def main():
         def call(method, signature, args=None):
             # A service restart invalidates the action; never stop a replacement
             # daemon's game because the well-known bus name was reused.
-            return bus.call_sync(owner, PATH, INTERFACE, method, GLib.Variant('(sss)', args) if args is not None else None,
+            input_value = GLib.Variant('(sss)' if len(args) == 3 else '(s)', args) if args is not None else None
+            return bus.call_sync(owner, PATH, INTERFACE, method, input_value,
                                  GLib.VariantType.new(signature),
                                  Gio.DBusCallFlags.NO_AUTO_START, 5000, None).unpack()
 

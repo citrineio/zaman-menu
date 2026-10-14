@@ -128,6 +128,7 @@ Item {
         else if (direction < 0) back();
         else activate();
     }
+    function cycleKeyboard() { if (editingPassword) passwordKeys.cycleView(); }
     function changeView(next) {
         navigationReset();
         passwordKeys.reset();
