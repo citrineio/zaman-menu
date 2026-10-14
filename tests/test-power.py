@@ -13,6 +13,7 @@ class PowerTests(unittest.TestCase):
             calls.append(method)
             if method=='ForegroundStatus':return (foreground,'','')
             if method=='Status':return ('Failed' if fail else 'Idle','','','','','logind denied' if fail else '')
+            if method=='InstalledGameStatus':return ('0','','','Idle','',False)
             return ()
         def emit(kind,**fields):events.append((kind,fields))
         def pause(dt):now[0]+=dt

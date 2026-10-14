@@ -49,7 +49,11 @@ ShellRoot {
     readonly property bool listPage: page === "" || page === "settings" || page === "power" || page === "storefronts"
     readonly property bool navigationPage: listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close"
     property int heldDirection: 0
+    property int heldHorizontal: 0
+    property bool keyboardCycleHeld: false
     property var pressed: ({})
+    readonly property bool editingKeyboard: page === "network" && networkPageLoader.item && networkPageLoader.item.editingPassword
+        || page === "bluetooth" && bluetoothPageLoader.item && bluetoothPageLoader.item.editingCode
     readonly property real uiScale: Math.max(0.65, Math.min(1.4, overlay.height / 1080))
     readonly property string helperPath: Quickshell.env("ZAMAN_MENU_DEV_INPUT") || ""
     readonly property string uiFontName: "Sans Serif"
@@ -114,7 +118,10 @@ ShellRoot {
     function stopRepeat() {
         repeatDelay.stop();
         repeatStep.stop();
+        horizontalDelay.stop();
+        horizontalStep.stop();
         heldDirection = 0;
+        heldHorizontal = 0;
     }
     function hold(direction, immediate) {
         stopRepeat();
@@ -125,6 +132,21 @@ ShellRoot {
     }
     function directionPressed(direction) {
         return direction < 0 ? (pressed.ui_up || pressed.key_up) : (pressed.ui_down || pressed.key_down);
+    }
+    function horizontalPressed(direction) {
+        return direction < 0 ? (pressed.ui_left || pressed.key_left) : (pressed.ui_right || pressed.key_right);
+    }
+    function moveHorizontal(direction) {
+        if (!editingKeyboard) return;
+        if (page === "network") networkPageLoader.item.horizontal(direction);
+        else bluetoothPageLoader.item.horizontal(direction);
+    }
+    function holdHorizontal(direction, immediate) {
+        stopRepeat();
+        if (direction === 0 || !menuOpen || !editingKeyboard) return;
+        heldHorizontal = direction;
+        if (immediate) moveHorizontal(direction);
+        horizontalDelay.restart();
     }
 
     Component.onCompleted: {
@@ -289,6 +311,7 @@ ShellRoot {
         closing = false;
         stopRepeat();
         pressed = ({});
+        keyboardCycleHeld = false;
         controllerCount = 0;
         controllerDevices = [];
         controllerWarning = "";
@@ -331,6 +354,7 @@ ShellRoot {
         opening = false;
         stopRepeat();
         pressed = ({});
+        keyboardCycleHeld = false;
     }
     function resetEntry() {
         entryPhase = "hidden";
@@ -361,14 +385,30 @@ ShellRoot {
         var next = Object.assign({}, pressed);
         next[event] = down;
         pressed = next;
+        if (event === "ui_context" || event === "ui_action") {
+            if (down && !wasDown && editingKeyboard && !keyboardCycleHeld) {
+                keyboardCycleHeld = true;
+                var keyboardPage = page === "network" ? networkPageLoader.item : bluetoothPageLoader.item;
+                if (keyboardPage) keyboardPage.cycleKeyboard();
+            } else if (!down && !pressed.ui_context && !pressed.ui_action) keyboardCycleHeld = false;
+            return;
+        }
         if (page === "display" && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
             if (down && !wasDown) displayPage.horizontal(event === "ui_left" || event === "key_left" ? -1 : 1);
-        } else if (page === "bluetooth" && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
-            if (down && !wasDown && bluetoothPageLoader.item) bluetoothPageLoader.item.horizontal(event === "ui_left" || event === "key_left" ? -1 : 1);
-            else if (down && !wasDown && !bluetoothPageLoader.item && (event === "ui_left" || event === "key_left")) back();
-        } else if (page === "network" && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
-            if (down && !wasDown && networkPageLoader.item) networkPageLoader.item.horizontal(event === "ui_left" || event === "key_left" ? -1 : 1);
-            else if (down && !wasDown && !networkPageLoader.item && (event === "ui_left" || event === "key_left")) back();
+        } else if ((page === "bluetooth" || page === "network") && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
+            var horizontal = event === "ui_left" || event === "key_left" ? -1 : 1;
+            if (editingKeyboard) {
+                if (down && !wasDown) holdHorizontal(horizontal, true);
+                else if (!down) {
+                    var held = heldHorizontal !== 0 && horizontalPressed(heldHorizontal) ? heldHorizontal
+                        : (horizontalPressed(-1) ? -1 : (horizontalPressed(1) ? 1 : 0));
+                    if (held !== heldHorizontal) holdHorizontal(held, false);
+                }
+            } else if (down && !wasDown) {
+                var item = page === "bluetooth" ? bluetoothPageLoader.item : networkPageLoader.item;
+                if (item) item.horizontal(horizontal);
+                else if (horizontal < 0) back();
+            }
         } else if (page === "audio" && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
             if (audioPageLoader.item) audioPageLoader.item.horizontal(event, value);
             else if (down && !wasDown && (event === "ui_left" || event === "key_left")) back();
@@ -505,7 +545,7 @@ ShellRoot {
             controllerCount = message.controllers;
             controllerDevices = message.devices || [];
         } else if (message.type === "input-reset") {
-            stopRepeat(); pressed = ({});
+            stopRepeat(); pressed = ({}); keyboardCycleHeld = false;
             if (audioPageLoader.item) {
                 audioPageLoader.item.stopHorizontal();
                 audioPageLoader.item.leftDown = false;
@@ -595,6 +635,25 @@ ShellRoot {
         onTriggered: {
             if (root.heldDirection === 0 || !root.menuOpen || !root.navigationPage) stop();
             else root.move(root.heldDirection);
+        }
+    }
+    Timer {
+        id: horizontalDelay
+        interval: 220
+        onTriggered: {
+            if (root.heldHorizontal !== 0 && root.menuOpen && root.editingKeyboard && root.horizontalPressed(root.heldHorizontal)) {
+                root.moveHorizontal(root.heldHorizontal);
+                horizontalStep.start();
+            }
+        }
+    }
+    Timer {
+        id: horizontalStep
+        interval: 70
+        repeat: true
+        onTriggered: {
+            if (root.heldHorizontal === 0 || !root.menuOpen || !root.editingKeyboard || !root.horizontalPressed(root.heldHorizontal)) root.stopRepeat();
+            else root.moveHorizontal(root.heldHorizontal);
         }
     }
 

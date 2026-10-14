@@ -26,8 +26,9 @@ class Harness:
         self.now=0
         self.foreground=foreground
         self.fail_exit=fail_exit
-    def call(self, method, signature):
+    def call(self, method, signature, args=None):
         self.calls.append(method)
+        if method == 'InstalledGameStatus': return ('0','','','Idle','',False)
         if method == 'Status':
             if self.states:
                 self.last=self.states.pop(0)
@@ -51,7 +52,7 @@ class ExitTests(unittest.TestCase):
         self.assertEqual(h.now,1)
     def test_already_idle_is_success_without_exit(self):
         h=Harness([status('Idle')]);h.run()
-        self.assertEqual(h.calls,['Status'])
+        self.assertEqual(h.calls,['InstalledGameStatus','Status'])
         self.assertTrue(h.events[-1][1]['ok'])
     def test_already_stopping_waits_without_resending(self):
         h=Harness([status('Stopping'),status('Stopping'),status('Idle')]);h.run()
@@ -98,6 +99,7 @@ class ExitTests(unittest.TestCase):
                 calls.append((destination,path,method,flags))
                 if method=='GetNameOwner': return Variant((':1.999',))
                 if method=='Status': return Variant(next(statuses))
+                if method=='InstalledGameStatus': return Variant(('0','','','Idle','',False))
                 if method=='ForegroundStatus': return Variant(('game','',''))
                 return Variant(())
         gio=types.SimpleNamespace(BusType=types.SimpleNamespace(SESSION=0),
@@ -112,6 +114,40 @@ class ExitTests(unittest.TestCase):
         self.assertEqual(calls[0][0],'org.freedesktop.DBus')
         self.assertTrue(all(destination==':1.999' and path==action.PATH and flags==1 for destination,path,method,flags in calls[1:]))
         self.assertIn('"ok": true',output.getvalue())
+
+    def test_native_exit_uses_one_generation_bound_close(self):
+        calls=[]; events=[]; now=[0]
+        states=iter([
+            ('18446744073709551615','net.supertuxkart.SuperTuxKart','SuperTuxKart','Running','',True),
+            ('18446744073709551615','net.supertuxkart.SuperTuxKart','SuperTuxKart','Stopping','',False),
+            ('18446744073709551615','net.supertuxkart.SuperTuxKart','SuperTuxKart','Exited','',False),
+        ])
+        def call(method, signature, args=None):
+            calls.append((method,args))
+            if method=='InstalledGameStatus': return next(states)
+            if method=='ForegroundStatus': return ('game','','')
+            return ()
+        action.exit_game(call,lambda kind,**fields:events.append((kind,fields)),
+                         lambda:now[0],lambda dt:now.__setitem__(0,now[0]+dt),2)
+        self.assertEqual([args for method,args in calls if method=='InstalledGameClose'],
+                         [('18446744073709551615',)])
+        self.assertTrue(events[-1][1]['ok'])
+
+    def test_native_replacement_is_not_closed(self):
+        calls=[]; now=[0]
+        states=iter([
+            ('7','net.supertuxkart.SuperTuxKart','SuperTuxKart','Running','',True),
+            ('8','org.openttd.OpenTTD','OpenTTD','Running','',True),
+        ])
+        def call(method, signature, args=None):
+            calls.append((method,args))
+            if method=='InstalledGameStatus': return next(states)
+            if method=='ForegroundStatus': return ('game','','')
+            return ()
+        with self.assertRaisesRegex(RuntimeError, 'changed while closing'):
+            action.exit_game(call,lambda *args,**kwargs:None,
+                             lambda:now[0],lambda dt:now.__setitem__(0,now[0]+dt),2)
+        self.assertEqual([args for method,args in calls if method=='InstalledGameClose'], [('7',)])
 
 
 if __name__ == '__main__': unittest.main()

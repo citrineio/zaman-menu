@@ -117,6 +117,7 @@ Item {
         else if (direction < 0) back();
         else activate();
     }
+    function cycleKeyboard() { if (editingCode) codeKeys.cycleView(); }
     function changeView(next) {
         navigationReset();
         view = next;
