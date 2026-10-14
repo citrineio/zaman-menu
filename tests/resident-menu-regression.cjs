@@ -11,7 +11,7 @@ function handler(marker) {
 }
 const startup = handler('    Component.onCompleted:');
 // Process callback closes at eight-space indentation.
-const exitOffset = source.indexOf('        onExited: (exitCode, exitStatus) => {');
+const exitOffset = source.indexOf('        onExited: (exitCode, exitStatus) => {', source.indexOf('        id: bridge'));
 const exitStart = source.indexOf('{', exitOffset) + 1;
 const exited = source.slice(exitStart, source.indexOf('\n        }', exitStart));
 function idle() {

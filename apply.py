@@ -7,6 +7,8 @@ import shutil
 from datetime import datetime, timezone
 
 PREVIOUS_HELPERS = {
+    'b6fbd3413bc0ea3212aefab46a5bf65fe8281c56e4c71c37243f61c4014f27d4',
+    'e76969d9b4eccaa211b1f739ac9534e8a3948d82112fd69623f79f5fc11cff5b',
     'dc3bb8e46cb5d9f27cf028ec8ed17f8add213c4a29c177c1b6ae34b73797ca0e',
     'cadc37fefa72f3c3a8aaa5dc098c2beb95898f3235355447fa700a7639d24cf1',
     '6e4062c5bb713a19aafea41ddc2f75ed3bc033e2af32ff0e1a805cce95e34850',

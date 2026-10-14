@@ -1,5 +1,7 @@
 # Zaman independent Quickshell prototype
 
+See [Sprint 1 storefront candidate](docs/sprint1-storefronts.md) for the paired source branches and device acceptance.
+
 ## Resident renderer and input helper
 
 Start with [RESIDENT-MENU.md](RESIDENT-MENU.md) for the current deployment.

@@ -1,6 +1,7 @@
 //@ pragma ShellId zaman-menu-dev
 
 import QtQuick
+import QtQuick.Window
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -15,6 +16,9 @@ ShellRoot {
     property double openStartedMs: 0
     property double lastReadyMs: -1
     property double lastVisibleMs: -1
+    property double firstFrameMs: -1
+    property double slideFinishedMs: -1
+    property string entryPhase: "hidden"
     readonly property string menuInstance: Date.now().toString()
     property int menuGeneration: 0
     property string sessionAction: "exit-game"
@@ -23,6 +27,13 @@ ShellRoot {
     property string exitNotice: ""
     readonly property string sessionActionPath: Quickshell.env("ZAMAN_MENU_SESSION_BRIDGE") || ""
     property string foreground: "library"
+    property string storefrontId: ""
+    property string storeGeneration: "0"
+    property bool storeGame: false
+    property var pendingStoreAction: null
+    property var storeRequest: ({action:"", id:"", generation:"0"})
+    property string storeNotice: ""
+    property bool storeResultReceived: false
     property int controllerCount: 0
     property bool displaySupported: false
     property var controllerDevices: []
@@ -35,8 +46,8 @@ ShellRoot {
     property int powerSelected: 0
     property string returnPage: ""
     property var pageEntry: ({ label: "", key: "", detail: "" })
-    readonly property bool listPage: page === "" || page === "settings" || page === "power"
-    readonly property bool navigationPage: listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown"
+    readonly property bool listPage: page === "" || page === "settings" || page === "power" || page === "storefronts"
+    readonly property bool navigationPage: listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close"
     property int heldDirection: 0
     property var pressed: ({})
     readonly property real uiScale: Math.max(0.65, Math.min(1.4, overlay.height / 1080))
@@ -45,13 +56,23 @@ ShellRoot {
     property string clockText: Qt.formatDateTime(new Date(), "h:mm AP")
     readonly property string monoFontName: monoFont.status === FontLoader.Ready ? monoFont.name : "Monospace"
     readonly property var mainEntries: [
-        { label: foreground === "game" ? "Resume" : "Return to library", key: "resume", detail: foreground === "game" ? "Return to your game" : "Continue browsing your games" },
+        { label: storefrontId.length ? "Resume " + (storefrontId === "steam" ? "Steam" : "Dukkan") : foreground === "game" ? "Resume" : "Return to library", key: "resume", detail: storefrontId.length ? "Return to the active application" : foreground === "game" ? "Return to your game" : "Continue browsing your games" },
         { label: "Audio", key: "audio", detail: "Volume and audio output" },
         { label: "Settings", key: "settings", detail: "Devices, connections and appearance" },
         { label: "Power", key: "power", detail: "Device power options" }
-    ].concat(foreground === "game" ? [
+    ].concat(foreground === "library" ? [
+        { label: "Storefronts", key: "storefronts", detail: "Dukkan and Steam" }
+    ] : []).concat(storefrontId.length && !storeGame ? [
+        { label: "Return to library", key: "store-home", detail: "Keep the storefront running in the background" }
+    ] : []).concat(storefrontId.length && (!storeGame || storefrontId === "steam") ? [
+        { label: "Close " + (storefrontId === "steam" ? "Steam" : "Dukkan"), key: "store-close", detail: storeGame ? "Close Steam and its running game" : "Close the storefront and return to library" }
+    ] : []).concat(foreground === "game" && !storefrontId.length ? [
         { label: "Exit Game", key: "exit", detail: "Close the current game" }
     ] : [])
+    readonly property var storefrontEntries: [
+        { label: "Dukkan", key: "store-dukkan", detail: "Browse and install games" },
+        { label: "Steam", key: "store-steam", detail: "Open your Steam library and store" }
+    ]
     readonly property var settingsEntries: [
         { label: "Controllers", key: "controllers", detail: "Connected controllers and active input profiles" },
         { label: "Network", key: "network", detail: "Connections and saved networks" },
@@ -64,7 +85,7 @@ ShellRoot {
         { label: "Reboot", key: "reboot", detail: "Restart Zaman OS" },
         { label: "Sleep", key: "sleep", detail: "Coming soon", disabled: true }
     ]
-    readonly property var entries: page === "settings" ? settingsEntries : page === "power" ? powerEntries : mainEntries
+    readonly property var entries: page === "settings" ? settingsEntries : page === "power" ? powerEntries : page === "storefronts" ? storefrontEntries : mainEntries
 
     FontLoader {
         id: menuFont
@@ -138,8 +159,10 @@ ShellRoot {
                 audio: audioPageLoader.item ? audioPageLoader.item.diagnostics() : null });
         }
         function timings(): string { return JSON.stringify({status:root.menuStatus(), helperIdle:root.helperIdle,
-            readyMs:root.lastReadyMs, visibleMs:root.lastVisibleMs,
-            sessionKey:root.menuInstance + ":" + root.menuGeneration, generation:root.menuGeneration}); }
+            readyMs:root.lastReadyMs, visibleMs:root.lastVisibleMs, firstFrameMs:root.firstFrameMs,
+            slideFinishedMs:root.slideFinishedMs, entryPhase:root.entryPhase,
+            entryProgress:panel.entryProgress, panelX:panel.x, panelWidth:panel.width,
+            sessionKey:root.menuInstance + ":" + root.menuGeneration, generation:root.menuGeneration, inputOwned:root.menuOpen || root.opening || root.closing || !root.helperIdle}); }
     }
 
     function select(index) {
@@ -147,7 +170,7 @@ ShellRoot {
         menuList.positionViewAtIndex(selected, ListView.Contain);
     }
     function move(direction) {
-        if (menuOpen && (page === "exit" || page === "reboot" || page === "shutdown")) { exitPage.move(direction); return; }
+        if (menuOpen && (page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close")) { exitPage.move(direction); return; }
         if (menuOpen && page === "display") {
             displayPage.move(direction);
             return;
@@ -173,7 +196,7 @@ ShellRoot {
     }
     function activate() {
         if (!menuOpen || exitBusy) return;
-        if (page === "exit" || page === "reboot" || page === "shutdown") { stopRepeat(); exitPage.activate(); return; }
+        if (page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close") { stopRepeat(); exitPage.activate(); return; }
         if (page === "display") {
             stopRepeat(); displayPage.activate(); return;
         }
@@ -204,12 +227,15 @@ ShellRoot {
         stopRepeat();
         var entry = entries[selected];
         if (!entry || entry.disabled === true) return;
-        if (entry.key === "resume") closeMenu();
-        else if (entry.key === "settings" || entry.key === "power") {
+        if (entry.key === "store-dukkan" || entry.key === "store-steam") queueStoreAction("launch", entry.key.slice(6), "0");
+        else if (entry.key === "store-home") queueStoreAction("home", storefrontId, storeGeneration);
+        else if (entry.key === "store-close") { returnPage = page; pageEntry = entry; page = "store-close"; }
+        else if (entry.key === "resume") closeMenu();
+        else if (entry.key === "settings" || entry.key === "power" || entry.key === "storefronts") {
             mainSelected = selected;
             pageEntry = entry;
             page = entry.key;
-            select(page === "power" ? powerSelected : settingsSelected);
+            select(page === "power" ? powerSelected : page === "storefronts" ? 0 : settingsSelected);
         } else {
             returnPage = page;
             if (page === "settings") settingsSelected = selected;
@@ -241,9 +267,9 @@ ShellRoot {
         if (!listPage) {
             page = returnPage;
             select(page === "settings" ? settingsSelected : page === "power" ? powerSelected : mainSelected);
-        } else if (page === "settings" || page === "power") {
+        } else if (page === "settings" || page === "power" || page === "storefronts") {
             if (page === "settings") settingsSelected = selected;
-            else powerSelected = selected;
+            else if (page === "power") powerSelected = selected;
             page = "";
             select(mainSelected);
         } else closeMenu();
@@ -256,6 +282,7 @@ ShellRoot {
         return "hidden";
     }
     function resetMenuSession() {
+        resetEntry();
         menuOpen = false;
         opening = false;
         ready = false;
@@ -286,6 +313,8 @@ ShellRoot {
         clockText = Qt.formatDateTime(new Date(), "h:mm AP");
         lastReadyMs = -1;
         lastVisibleMs = -1;
+        firstFrameMs = -1;
+        slideFinishedMs = -1;
         if (!bridge.running) {
             helperIdle = false;
             bridge.running = true;
@@ -298,9 +327,24 @@ ShellRoot {
     function hideMenu() {
         if ((menuOpen || opening) && bluetoothPageLoader.item) bluetoothPageLoader.item.shutdown();
         menuOpen = false;
+        resetEntry();
         opening = false;
         stopRepeat();
         pressed = ({});
+    }
+    function resetEntry() {
+        entryPhase = "hidden";
+        slideIn.stop();
+        panel.entryProgress = 0;
+    }
+    function startEntryFrame() {
+        if (!menuOpen || closing || entryPhase !== "await-frame" || !overlay.backingWindowVisible
+                || overlay.width <= 0 || overlay.height <= 0 || panel.width <= 0 || panel.height <= 0) return;
+        // This frame was queued with progress=0. Only now start moving the panel.
+        firstFrameMs = Date.now() - openStartedMs;
+        entryPhase = "sliding";
+        slideIn.restart();
+        bridge.write(JSON.stringify({action: "opened"}) + "\n");
     }
     function closeMenu() {
         if (exitBusy || closing || !(menuOpen || opening)) return;
@@ -341,7 +385,20 @@ ShellRoot {
             else if (event === "ui_back" || event === "ui_cancel" || event === "ui_left" || event === "key_left") back();
         }
     }
+    function queueStoreAction(action, id, generation) {
+        if (exitBusy || pendingStoreAction !== null || closing || !menuOpen || sessionActionPath.length === 0) return;
+        pendingStoreAction = ({action:action, id:id, generation:generation});
+        closeMenu();
+    }
+    function receiveStoreResult(line) {
+        var result;
+        try { result = JSON.parse(line); } catch (error) { return; }
+        if (result.type !== "store-result") return;
+        storeResultReceived = true;
+        storeNotice = result.ok ? "" : result.message;
+    }
     function requestExitGame() {
+        if (page === "store-close") { queueStoreAction("close", storefrontId, storeGeneration); return; }
         var power = page === "reboot" || page === "shutdown";
         if (exitBusy || !menuOpen || (!power && (page !== "exit" || foreground !== "game"))) return;
         if (sessionActionPath.length === 0) {
@@ -382,6 +439,18 @@ ShellRoot {
     }
 
     Process {
+        id: storeAction
+        command: ["/usr/bin/python3", root.sessionActionPath, "storefront", root.storeRequest.action, root.storeRequest.id, root.storeRequest.generation]
+        stdout: SplitParser { onRead: data => root.receiveStoreResult(data) }
+        stderr: SplitParser { onRead: data => console.warn(data) }
+        onExited: (exitCode, exitStatus) => {
+            root.exitBusy = false;
+            if (!root.storeResultReceived) root.storeNotice = "The storefront request stopped before reporting completion.";
+            if (root.storeNotice.length) root.openMenu();
+        }
+    }
+
+    Process {
         id: exitAction
         command: ["/usr/bin/python3", root.sessionActionPath, root.sessionAction]
         stdout: SplitParser { onRead: data => root.receiveExitResult(data) }
@@ -402,16 +471,31 @@ ShellRoot {
             if (opening && !closing) {
                 helperIdle = false;
                 bridge.write(JSON.stringify({action: "open"}) + "\n");
-            } else resetMenuSession();
+            } else {
+                resetMenuSession();
+                if (pendingStoreAction !== null) {
+                    storeRequest = pendingStoreAction;
+                    pendingStoreAction = null;
+                    exitBusy = true;
+                    storeResultReceived = false;
+                    storeNotice = "";
+                    storeAction.running = true;
+                }
+            }
         } else if (message.type === "ready") {
             // A close during acquisition must never be undone by late readiness.
             if (!opening || closing || !bridge.running) return;
             displaySupported = message.display === true;
             foreground = message.foreground;
+            storefrontId = message.storefront || "";
+            storeGeneration = message.storeGeneration || "0";
+            storeGame = message.storeGame === true;
             controllerCount = message.controllers;
             controllerDevices = message.devices || [];
             ready = true;
             opening = false;
+            resetEntry();
+            entryPhase = "await-frame";
             menuOpen = true;
             selected = 0;
             lastReadyMs = Date.now() - openStartedMs;
@@ -456,6 +540,10 @@ ShellRoot {
         stderr: SplitParser { onRead: data => console.warn(data) }
         onExited: (exitCode, exitStatus) => {
             root.hideMenu();
+            if (root.pendingStoreAction !== null) {
+                root.pendingStoreAction = null;
+                root.storeNotice = "The input helper stopped before restoring the menu lease. Reopen the menu to try again.";
+            }
             root.helperIdle = false;
             if (exitCode !== 0) console.error("Preview helper exited with code " + exitCode);
             root.resetMenuSession();
@@ -524,23 +612,31 @@ ShellRoot {
                 root.lastVisibleMs = Date.now() - root.openStartedMs;
                 console.info("Resident menu visible after " + root.lastVisibleMs + " ms");
                 Qt.callLater(() => inputScope.forceActiveFocus());
-                panel.slideOffset = -panel.width - root.px(36);
-                slideIn.restart();
-                bridge.write(JSON.stringify({action: "opened"}) + "\n");
             } else if (!backingWindowVisible) {
-                slideIn.stop();
-                panel.slideOffset = -panel.width - root.px(36);
+                root.resetEntry();
             }
         }
         onClosed: root.closeMenu()
 
+        Connections {
+            target: panel.Window.window
+            function onFrameSwapped() { root.startEntryFrame(); }
+        }
+
         NumberAnimation {
             id: slideIn
             target: panel
-            property: "slideOffset"
-            to: 0
-            duration: 300
-            easing.type: Easing.InOutCubic
+            property: "entryProgress"
+            from: 0
+            to: 1
+            duration: 180
+            easing.type: Easing.OutCubic
+            onFinished: {
+                if (root.menuOpen && root.entryPhase === "sliding") {
+                    root.entryPhase = "settled";
+                    root.slideFinishedMs = Date.now() - root.openStartedMs;
+                }
+            }
         }
 
         Rectangle {
@@ -569,8 +665,9 @@ ShellRoot {
         }
         Rectangle {
             id: panel
-            property real slideOffset: -width - root.px(36)
-            x: root.px(28) + slideOffset
+            property real entryProgress: 0
+            readonly property real offscreenX: -width - root.px(8)
+            x: offscreenX + (root.px(28) - offscreenX) * entryProgress
             y: root.px(26)
             width: Math.min(Math.round(parent.width * 0.44), root.px(700))
             height: parent.height - root.px(52)
@@ -665,7 +762,7 @@ ShellRoot {
                     MenuText {
                         text: root.page === "settings" ? "Devices, connections and personalization."
                             : root.page === "power" ? "Shutdown and reboot require confirmation."
-                            : (root.foreground === "game" ? "Your game is still running." : "Your library is waiting.")
+                            : (root.storeNotice.length ? root.storeNotice : root.storeGame ? "Resume your game or close Steam and its game." : root.storefrontId.length ? "Your storefront is running." : root.foreground === "game" ? "Your game is still running." : "Your library is waiting.")
                         color: "#BBC6D3"
                         font.pixelSize: root.px(15)
                     }
@@ -885,12 +982,12 @@ ShellRoot {
 
             ExitGamePage {
                 id: exitPage
-                visible: root.page === "exit" || root.page === "reboot" || root.page === "shutdown"
+                visible: root.page === "exit" || root.page === "reboot" || root.page === "shutdown" || root.page === "store-close"
                 active: root.menuOpen && visible
-                prompt: root.page === "reboot" ? "Restart Zaman?" : root.page === "shutdown" ? "Shut down Zaman?" : "Exit this game?"
-                detail: root.page === "reboot" ? "Close any running game and restart Zaman." : root.page === "shutdown" ? "Close any running game and turn off Zaman." : "Close the current game and return to your library."
+                prompt: root.page === "reboot" ? "Restart Zaman?" : root.page === "shutdown" ? "Shut down Zaman?" : root.page === "store-close" ? "Close " + (root.storefrontId === "steam" ? "Steam" : "Dukkan") + "?" : "Exit this game?"
+                detail: root.page === "reboot" ? "Close any running game and restart Zaman." : root.page === "shutdown" ? "Close any running game and turn off Zaman." : root.page === "store-close" ? (root.storeGame ? "Close Steam and its running game, then return to your library. Unsaved progress may be lost. Downloads may stop." : "Close the storefront and return to your library. Downloads may stop.") : "Close the current game and return to your library."
                 cancelLabel: root.page === "exit" ? "Keep playing" : "Cancel"
-                confirmLabel: root.page === "reboot" ? "Reboot" : root.page === "shutdown" ? "Shutdown" : "Exit Game"
+                confirmLabel: root.page === "reboot" ? "Reboot" : root.page === "shutdown" ? "Shutdown" : root.page === "store-close" ? "Close " + (root.storefrontId === "steam" ? "Steam" : "Dukkan") : "Exit Game"
                 busyHeading: root.sessionAction === "reboot" ? "Restarting Zaman…" : root.sessionAction === "shutdown" ? "Shutting down Zaman…" : "Closing game…"
                 busy: root.exitBusy
                 notice: root.exitNotice
