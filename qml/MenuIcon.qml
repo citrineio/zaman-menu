@@ -63,6 +63,20 @@ Canvas {
             ctx.moveTo(10, 7.8); ctx.lineTo(16, 12); ctx.lineTo(10, 16.2);
             ctx.closePath(); ctx.fill();
             break;
+        case "storefronts":
+        case "store-dukkan":
+        case "store-steam":
+            box(4, 10, 16, 11, 1);
+            line([[3,10],[5,3],[19,3],[21,10]], true);
+            box(9, 14, 6, 7, 0);
+            break;
+        case "store-home":
+            line([[3,11],[12,3],[21,11]], false);
+            line([[5,10],[5,21],[19,21],[19,10]], false);
+            break;
+        case "store-close":
+            line([[6,6],[18,18]], false); line([[18,6],[6,18]], false);
+            break;
         case "library":
             box(3, 3, 7, 7, 1); box(14, 3, 7, 7, 1);
             box(3, 14, 7, 7, 1); box(14, 14, 7, 7, 1);

@@ -98,7 +98,7 @@ async fn foreground(connection: &Connection) -> Result<String> {
 }
 
 fn owns_foreground(foreground: &str) -> bool {
-    matches!(foreground, "library" | "game")
+    matches!(foreground, "library" | "game" | "storefront")
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -264,16 +264,25 @@ impl ControllerLease {
         let mut unavailable = false;
         for (path, current) in &self.devices {
             if current.dbus.is_empty() || self.touched.contains(path) { continue; }
+            let check_started = Instant::now();
             let proxy = live_composite(connection, self.owner.as_str(), path.as_str()).await?;
-            let mut sources: Vec<String> = proxy.get_property("SourceDevicePaths").await?;
+            // These read-only identity checks are independent. Overlap their
+            // round trips; all must finish before reading ownership or writing.
+            let (mut sources, name, mut dbus) = tokio::try_join!(
+                proxy.get_property::<Vec<String>>("SourceDevicePaths"),
+                proxy.get_property::<String>("Name"),
+                proxy.get_property::<Vec<String>>("DbusDevices"),
+            )?;
             sources.sort();
-            let name: String = proxy.get_property("Name").await?;
-            let mut dbus: Vec<String> = proxy.get_property("DbusDevices").await?;
             dbus.sort();
             if sources != current.sources || name != current.name || dbus != current.dbus {
                 return Err(Box::new(ControllerLost));
             }
+            timing_log(&format!("[menu-acquire] {path} live-identity: {} ms", check_started.elapsed().as_millis()));
+            // Keep the ownership read immediately before deciding to acquire.
+            let mode_started = Instant::now();
             let mode: u32 = proxy.get_property("InterceptMode").await?;
+            timing_log(&format!("[menu-acquire] {path} mode-read: {} ms", mode_started.elapsed().as_millis()));
             if mode == ALL {
                 // Unknown ALL ownership is never stolen, including startup races.
                 unavailable = true;
@@ -284,7 +293,9 @@ impl ControllerLease {
             } else { self.saved.push((path.clone(), mode)); }
             // Record before IPC: a cancelled write may already have applied.
             self.touched.insert(path.clone());
+            let intercept_started = Instant::now();
             proxy.set_property("InterceptMode", ALL).await?;
+            timing_log(&format!("[menu-acquire] {path} intercept-write: {} ms", intercept_started.elapsed().as_millis()));
         }
         Ok(unavailable && !self.devices.values().any(|device|
             self.touched.contains(&device.path) && !device.dbus.is_empty()))
@@ -377,7 +388,7 @@ fn restore_target(tree: &Value, saved: Option<&Window>, initial: &str, current: 
             if views.iter().any(|v| v.id == saved.id && v.pid == saved.pid) { return Some(saved.id); }
         }
     }
-    if current == "game" {
+    if current == "game" || current == "storefront" {
         views.iter().find(|v| v.focused).map(|v| v.id)
     } else {
         views.iter().find(|v| v.app_id == "org.pegasus-frontend.pegasus-fe").map(|v| v.id)
@@ -711,7 +722,10 @@ async fn run_session(session: &Connection, commands: &mut mpsc::Receiver<String>
         // Recheck after asynchronous setup, before showing an exclusive layer.
         if foreground(&session).await? != initial { return Err(message("foreground changed during preview startup")); }
         startup_timing(startup_started, &mut phase_started, "foreground-recheck");
+        let proxy = Proxy::new(session, SERVICE, PATH, INTERFACE).await?;
+        let store: (String, u64, String, String, bool, String) = proxy.call("StorefrontStatus", &()).await?;
         emit(json!({"type":"ready", "foreground":initial,
+            "storefront":store.0, "storeGeneration":store.1.to_string(), "storeGame":store.4, "guideOwner":store.3,
             "display":true,
             "controllers":if startup_lost { 0 } else { lease.devices.values().filter(|device| lease.touched.contains(&device.path) && !device.dbus.is_empty()).count() },
             "devices":if startup_lost { Vec::new() } else { lease.views() }}))?;

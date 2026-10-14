@@ -63,7 +63,7 @@ def exit_game(call, emit_event=emit, clock=time.monotonic, pause=time.sleep, tim
 def power_action(call, kind, emit_event=emit, clock=time.monotonic, pause=time.sleep, timeout=120):
     method = {'reboot': 'Reboot', 'shutdown': 'Shutdown'}[kind]
     foreground = call('ForegroundStatus', '(sss)')[0]
-    if foreground not in ('library', 'game'):
+    if foreground not in ('library', 'game', 'storefront'):
         raise RuntimeError('Close Transfer or the other foreground screen first.')
     # Only sessiond may stop the game and request power from logind. A successful
     # method reply acknowledges acceptance; it does not prove the system is off.
@@ -79,10 +79,33 @@ def power_action(call, kind, emit_event=emit, clock=time.monotonic, pause=time.s
     raise RuntimeError('The power request is still pending. Check the session state before trying again.')
 
 
+def storefront_action(call, action, id, generation, emit_event=emit, clock=time.monotonic, pause=time.sleep, timeout=20):
+    if action not in ('launch', 'home', 'close') or id not in ('dukkan', 'steam'):
+        raise RuntimeError('Unknown storefront action.')
+    # Exactly one mutation, even when the reply is ambiguous or times out.
+    call('StorefrontAction', '()', (action, id, generation))
+    deadline = clock() + timeout
+    while clock() < deadline:
+        context = call('StorefrontStatus', '(stssbs)')
+        if action == 'home' and not context[0]: break
+        if action == 'close' and not context[0]: break
+        if action == 'launch' and context[0] == id and context[2] == 'Running': break
+        if context[0] == id and context[2] == 'Failed':
+            raise RuntimeError(context[5] or 'The storefront could not start.')
+        # Failure/exit restores Home. Report it instead of waiting indefinitely.
+        if action == 'launch' and not context[0]:
+            raise RuntimeError('The storefront exited or failed during startup. Check the sessiond journal.')
+        pause(0.1)
+    else:
+        raise RuntimeError('The storefront request is still pending. Check its status before retrying.')
+    emit_event('store-result', ok=True, message='')
+
+
 def main():
     lock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        if len(sys.argv) != 2 or sys.argv[1] not in ('exit-game', 'reboot', 'shutdown'):
+        is_store = len(sys.argv) == 5 and sys.argv[1] == 'storefront'
+        if not is_store and (len(sys.argv) != 2 or sys.argv[1] not in ('exit-game', 'reboot', 'shutdown')):
             raise RuntimeError('Expected exit-game, reboot or shutdown.')
         runtime = os.environ['XDG_RUNTIME_DIR']
         lock.bind('\0zaman-menu-exit:' + runtime)
@@ -94,14 +117,16 @@ def main():
                               'org.freedesktop.DBus', 'GetNameOwner', GLib.Variant('(s)', (SERVICE,)),
                               GLib.VariantType.new('(s)'), Gio.DBusCallFlags.NONE, 2000, None).unpack()[0]
 
-        def call(method, signature):
+        def call(method, signature, args=None):
             # A service restart invalidates the action; never stop a replacement
             # daemon's game because the well-known bus name was reused.
-            return bus.call_sync(owner, PATH, INTERFACE, method, None,
+            return bus.call_sync(owner, PATH, INTERFACE, method, GLib.Variant('(sss)', args) if args is not None else None,
                                  GLib.VariantType.new(signature),
                                  Gio.DBusCallFlags.NO_AUTO_START, 5000, None).unpack()
 
-        if sys.argv[1] == 'exit-game':
+        if is_store:
+            storefront_action(call, *sys.argv[2:])
+        elif sys.argv[1] == 'exit-game':
             exit_game(call)
         else:
             power_action(call, sys.argv[1])
@@ -111,7 +136,7 @@ def main():
         if 'the Zaman system menu is not open' in message:
             message = 'Sessiond needs the included ExitGame API update. Build and deploy it, then try again.'
         log('failed: ' + message.replace('\n', ' '))
-        emit('exit-result', ok=False, message=message)
+        emit('store-result' if len(sys.argv) > 1 and sys.argv[1] == 'storefront' else 'exit-result', ok=False, message=message)
         return 1
     finally:
         lock.close()

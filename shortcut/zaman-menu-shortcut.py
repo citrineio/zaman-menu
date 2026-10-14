@@ -69,8 +69,8 @@ def main():
     listener_lock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener_lock.bind('\0zaman-menu-shortcut:' + runtime)
     home = Path.home()
-    launcher = home / 'zaman-quickshell-prototype/run.sh'
-    project = home / 'zaman-sessiond-publish'
+    launcher = Path(os.environ.get('ZAMAN_MENU_LAUNCHER', home / 'zaman-quickshell-prototype/run.sh'))
+    project = Path(os.environ.get('ZAMAN_SESSIOND_PROJECT', home / 'zaman-sessiond-publish'))
     if not launcher.is_file():
         raise RuntimeError(f'Existing launcher missing: {launcher}')
 
@@ -171,7 +171,7 @@ def main():
             status = session.call_sync('com.kawnelectro.Zaman.Session1', '/com/kawnelectro/Zaman/Session1',
                 'com.kawnelectro.Zaman.Session1', 'ForegroundStatus', None, None,
                 Gio.DBusCallFlags.NONE, 1500, None).unpack()[0]
-            if status not in ('library', 'game'):
+            if status not in ('library', 'game', 'storefront'):
                 print(f'Not launching over foreground owner: {status}', flush=True)
                 return
             print('Start + Select: opening modern menu.', flush=True)
