@@ -57,6 +57,26 @@ Canvas {
         }
 
         switch (name) {
+        default:
+        case "system":
+        case "notifications":
+            ctx.beginPath(); ctx.arc(12,10,6,Math.PI,0); ctx.stroke();
+            line([[6,10],[6,16],[3,18],[21,18],[18,16],[18,10]], false);
+            ctx.beginPath(); ctx.arc(12,19,2,0,Math.PI); ctx.stroke();
+            break;
+        case "battery":
+            box(3,6,17,12,2); line([[22,10],[22,14]],false);
+            line([[6,9],[6,15]],false); break;
+        case "install":
+        case "transfer":
+            line([[12,3],[12,15],[7,10]],false); line([[12,15],[17,10]],false);
+            line([[3,15],[3,21],[21,21],[21,15]],false); break;
+        case "success":
+            circle(12,12,9,false); line([[7,12],[11,16],[17,8]],false); break;
+        case "warning":
+        case "error":
+            line([[12,3],[22,21],[2,21],[12,3]],true);
+            line([[12,8],[12,14]],false); circle(12,18,0.8,true); break;
         case "resume":
             circle(12, 12, 9, false);
             ctx.beginPath();
@@ -100,6 +120,7 @@ Canvas {
             box(3, 4, 18, 13, 1.7);
             line([[12,17],[12,21]], false); line([[8,21],[16,21]], false);
             break;
+        case "input":
         case "controllers":
             ctx.beginPath();
             ctx.moveTo(8,6); ctx.lineTo(16,6);

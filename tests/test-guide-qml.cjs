@@ -51,3 +51,22 @@ const pageSource=fs.readFileSync(require('node:path').join(__dirname,'../qml/Exi
 assert.match(pageSource,/model: \[exitPage.cancelLabel, exitPage.confirmLabel\]/);
 assert.match(source,/cancelLabel: root.page === "exit" \? "Keep playing" : "Cancel"/);
 console.log(`PASS: ${checks} Guide IPC, lease generation and power QML scenarios.`);
+
+// Every section uses the same close/lease-restoration handshake, with origin
+// recorded before page shutdown can mutate page state.
+for (const page of ['', 'settings', 'audio', 'network', 'bluetooth', 'controllers',
+                    'display', 'appearance', 'notifications', 'notification-settings',
+                    'storefronts', 'store-close', 'exit', 'reboot', 'shutdown']) {
+    const s = fixture(page); s.activeTab = page === 'notifications' ? 1 : 2;
+    if (page === 'bluetooth') s.bluetoothPageLoader.item = {shutdown:()=>{s.page='settings';}};
+    s.closeMenu();
+    const command = s.writes.filter(x=>x.action === 'close');
+    assert.equal(command.length,1,'one restoration request per close');
+    assert.equal(command[0].page,page,'origin survives section shutdown');
+    assert.equal(command[0].tab,s.activeTab);
+    assert.equal(s.menuOpen,false); assert.equal(s.closing,true);
+    assert.equal(s.helperIdle,false,'restoration must be acknowledged before idle');
+    s.receive(JSON.stringify({type:'helper-idle',protocol:1}));
+    assert.equal(s.helperIdle,true); assert.equal(s.closing,false);
+}
+console.log('PASS: close origin and restoration handshake across 15 menu sections.');

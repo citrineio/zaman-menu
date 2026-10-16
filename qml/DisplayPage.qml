@@ -28,8 +28,7 @@ Item {
         Math.ceil((previewDeadline - clockNow) / 1000))) : 0
     readonly property var output: outputs.find(o => identity(o) === outputId) || null
     readonly property bool hasOutput: output !== null
-    readonly property var modes: output ? output.modes.filter(m => m.width > 0 && m.height > 0 && m.refresh > 0)
-        .slice().sort((a, b) => b.width - a.width || b.height - a.height || b.refresh - a.refresh) : []
+    readonly property var modes: distinctModes(output ? output.modes : [])
     readonly property var resolutions: {
         var result = [];
         for (var i = 0; i < modes.length; ++i)
@@ -70,6 +69,13 @@ Item {
     function clean(value) { return String(value || "").replace(/[\x00-\x1f\x7f]/g, "").slice(0, 120); }
     function identity(o) { return JSON.stringify([o.name, o.make, o.model, o.serial]); }
     function sameMode(a, b) { return a && b && a.width === b.width && a.height === b.height && a.refresh === b.refresh; }
+    function distinctModes(values) {
+        var result = [];
+        for (var mode of values) {
+            if (mode.width > 0 && mode.height > 0 && mode.refresh > 0 && !result.some(other => sameMode(other, mode))) result.push(mode);
+        }
+        return result.sort((a, b) => b.width - a.width || b.height - a.height || b.refresh - a.refresh);
+    }
     function hz(rate) { return (rate / 1000).toFixed(3) + " Hz"; }
     function modeLabel(m) { return m ? m.width + " × " + m.height + " · " + hz(m.refresh) : "Unknown mode"; }
     function outputName(o) {
@@ -155,7 +161,7 @@ Item {
             mode = choices.find(m => output.current_mode && m.refresh === output.current_mode.refresh) || choices[0];
         } else if (key === "refresh" && rates.length) {
             var rate = rates.findIndex(m => sameMode(m, mode));
-            mode = rates[(rate + direction + rates.length) % rates.length];
+            mode = rates[rate < 0 ? (direction > 0 ? 0 : rates.length - 1) : (rate + direction + rates.length) % rates.length];
         }
     }
     function horizontal(direction) {
@@ -195,7 +201,7 @@ Item {
         requestId = -1;
         if (active) {
             notice = ""; backendError = ""; preview = null;
-            select(0);
+            select(Math.min(selected, rows.length - 1));
             if (helperReady) {
                 command({ action: "display-open" });
                 send({ action: "display-status" });

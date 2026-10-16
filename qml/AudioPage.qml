@@ -53,6 +53,17 @@ Item {
     }
 
     function px(value) { return Math.round(value * uiScale); }
+    function location() {
+        return {selected:selected, scroll:controls.contentY, candidateName:candidate() ? candidate().name : ""};
+    }
+    function restoreLocation(saved) {
+        stopHorizontal();
+        selected = Math.max(0, Math.min(rows.length - 1, saved.selected));
+        var output = outputs.find(node => node.name === saved.candidateName);
+        if (output) candidateNode = output;
+        controls.forceLayout();
+        controls.contentY = saved.scroll;
+    }
     function outputLabel(node) {
         return node ? (node.description || node.nickname || node.name).replace(/[\x00-\x1f\x7f]/g, "").slice(0, 80) : "";
     }
@@ -162,7 +173,7 @@ Item {
     }
     onActiveChanged: {
         stopHorizontal(); leftDown = false; rightDown = false;
-        if (active) { selected = 0; errorText = ""; resetCandidate(); }
+        if (active) { errorText = ""; if (!candidate()) resetCandidate(); }
         else { outputDeadline.stop(); outputRequestPending = false; pendingOutput = null; }
     }
     onSinkChanged: {

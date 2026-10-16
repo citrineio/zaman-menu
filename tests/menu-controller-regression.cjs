@@ -5,28 +5,31 @@ const vm = require('node:vm');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../qml/shell.qml'), 'utf8');
 const functions = source.match(/^    function \w+\([^\n]*\) \{[^\n]*\}$|^    function \w+\([^\n]*\) \{[\s\S]*?^    \}/gm);
-assert.equal(functions.length, 28, 'all root functions must be exercised from the real source');
+assert.equal(functions.length, 32, 'all root functions must be exercised from the real source');
 let checks = 0;
 function fixture(page = '') {
-  const state = {root:null, storefrontId:"", storeGeneration:"0", storeGame:false, pendingStoreAction:null, storeAction:{running:false}, storeNotice:"", storeResultReceived:false, menuGeneration:0, menuInstance:'test', sessionAction:'exit-game', exitBusy:false, exitResultReceived:false, exitNotice:'', sessionActionPath:'/test/action.py', exitAction:{running:false}, exitPage:{move:()=>{}, activate:()=>{}}, menuOpen:true, opening:false, ready:true, closing:false, helperIdle:false, lastReadyMs:-1, lastVisibleMs:-1, openStartedMs:0, page, selected:0, mainSelected:0,
+  const state = {root:null, activeTab:0, tabLocations:[null,null,null], navigationRevision:0, audioLoaded:false, networkLoaded:false, bluetoothLoaded:false,
+    notifications:{available:true, records:[], popups:[], preferences:{dnd:false,steamReminder:true}, send:msg=>state.actions.push(msg)},
+    notificationsPage:{blocked:false, detail:null, confirming:false, move:()=>{}, activate:()=>{}, back:()=>false, dismiss:()=>state.actions.push('dismiss'), clear:()=>state.actions.push('clear')}, storefrontId:"", storeGeneration:"0", storeGame:false, pendingStoreAction:null, storeAction:{running:false}, storeNotice:"", storeResultReceived:false, menuGeneration:0, menuInstance:'test', sessionAction:'exit-game', exitBusy:false, exitResultReceived:false, exitNotice:'', sessionActionPath:'/test/action.py', exitAction:{running:false}, exitPage:{move:()=>{}, activate:()=>{}}, menuOpen:true, opening:false, ready:true, closing:false, helperIdle:false, lastReadyMs:-1, lastVisibleMs:-1, openStartedMs:0, page, selected:0, mainSelected:0,
     entryPhase:'hidden', firstFrameMs:-1, slideFinishedMs:-1,
     panel:{entryProgress:0, width:700, height:1028}, overlay:{width:1920,height:1080,backingWindowVisible:true},
     slideIn:{starts:0,stop:()=>{},restart:()=>state.slideIn.starts++},
-    settingsSelected:0, returnPage:'settings', pressed:{}, heldDirection:0, heldHorizontal:0, keyboardCycleHeld:false, controllerWarning:'',
+    settingsSelected:0, powerSelected:0, pageEntry:{label:'',key:'',detail:''}, returnPage:'settings', pressed:{}, heldDirection:0, heldHorizontal:0, keyboardCycleHeld:false, controllerWarning:'',
     controllerCount:1, controllerDevices:[], foreground:'game', displaySupported:true,
     warnings:[], writes:[], quit:0, actions:[],
-    console:{warn:()=>{}, error:()=>{}, info:()=>{}}, Qt:{quit:()=>state.quit++, formatDateTime:()=> '7:00 PM'},
+    console:{warn:()=>{}, error:()=>{}, info:()=>{}}, Qt:{callLater:fn=>fn(), quit:()=>state.quit++, formatDateTime:()=> '7:00 PM'},
     bridge:{running:true, write:value=>state.writes.push(JSON.parse(value))},
     repeatDelay:{stop:()=>{}, restart:()=>{}}, repeatStep:{stop:()=>{}, start:()=>{}},
     horizontalDelay:{stop:()=>{}, restart:()=>{}}, horizontalStep:{stop:()=>{}, start:()=>{}},
-    menuList:{positionViewAtIndex:()=>{}}, ListView:{Contain:0},
+    menuList:{contentY:0, forceLayout:()=>{}, positionViewAtIndex:()=>{}}, ListView:{Contain:0},
     bluetoothPageLoader:{item:null}, networkPageLoader:{item:null}, audioPageLoader:{item:null},
     controllersPage:{move:()=>{}, activate:()=>{}},
     displayPage:{receive:()=>state.actions.push('display'), back:()=>state.actions.push('back'),
       activate:()=>{}, horizontal:()=>{}, move:()=>{}},
     mainEntries:[{key:'resume'}, {key:'settings'}], settingsEntries:[{key:'controllers'}]};
   Object.defineProperties(state, {
-    listPage:{get:()=>state.page === '' || state.page === 'settings' || state.page === 'storefronts'},
+    canSwitchTab:{get:()=>vm.runInContext(source.match(/readonly property bool canSwitchTab: ([^\n]+)/)[1],state)},
+    listPage:{get:()=>['','settings','power','storefronts','notification-settings'].includes(state.page)},
     navigationPage:{get:()=>true},
     editingKeyboard:{get:()=>state.page === 'network' && !!state.networkPageLoader.item?.editingPassword
       || state.page === 'bluetooth' && !!state.bluetoothPageLoader.item?.editingCode},
@@ -41,7 +44,7 @@ function staysOpen(state, originalPage) {
   assert.equal(state.quit,0); assert.equal(state.page,originalPage);
   assert.equal(state.writes.filter(x=>x.action === 'close').length,0); checks++;
 }
-for (const page of ['', 'settings', 'controllers', 'audio', 'network', 'bluetooth', 'display', 'appearance', 'exit', 'reboot', 'shutdown', 'storefronts', 'store-close']) {
+for (const page of ['', 'settings', 'controllers', 'audio', 'network', 'bluetooth', 'display', 'appearance', 'exit', 'reboot', 'shutdown', 'storefronts', 'store-close','notifications','notification-settings']) {
   const state = fixture(page);
   state.heldDirection = -1; state.pressed = {ui_up:true};
   for (let i=0; i<20; i++) {

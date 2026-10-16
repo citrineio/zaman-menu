@@ -38,6 +38,23 @@ ShellRoot {
     property bool displaySupported: false
     property var controllerDevices: []
     property string controllerWarning: ""
+    property int activeTab: 0
+    property var tabLocations: [null, null, null]
+    property int navigationRevision: 0
+    property bool audioLoaded: false
+    property bool networkLoaded: false
+    readonly property bool canSwitchTab: menuOpen && !exitBusy
+    readonly property bool menuPresentsToasts: menuOpen && notifications.available && notifications.outputPresent
+        && overlay.screen !== null && overlay.screen.name === notifications.outputName
+    readonly property var notificationSettings: [
+        {key:"dnd", label:"Do Not Disturb", detail:notifications.preferences.dnd ? "On · Critical alerts remain visible" : "Off · Show routine popups"},
+        {key:"steam-reminder", label:"Steam menu shortcut reminder", detail:notifications.preferences.steamReminder ? "On · Start + Select reminder when Steam opens" : "Off · Reminder disabled"}
+    ]
+    NotificationClient {
+        id: notifications
+        presentingMenu: root.menuPresentsToasts
+        viewing: root.menuOpen && root.activeTab === 1
+    }
     property int selected: 0
     property string page: ""
     property bool bluetoothLoaded: false
@@ -46,8 +63,8 @@ ShellRoot {
     property int powerSelected: 0
     property string returnPage: ""
     property var pageEntry: ({ label: "", key: "", detail: "" })
-    readonly property bool listPage: page === "" || page === "settings" || page === "power" || page === "storefronts"
-    readonly property bool navigationPage: listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close"
+    readonly property bool listPage: page === "" || page === "settings" || page === "power" || page === "storefronts" || page === "notification-settings"
+    readonly property bool navigationPage: page === "notifications" || listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close"
     property int heldDirection: 0
     property int heldHorizontal: 0
     property bool keyboardCycleHeld: false
@@ -62,7 +79,6 @@ ShellRoot {
     readonly property var mainEntries: [
         { label: storefrontId.length ? "Resume " + (storefrontId === "steam" ? "Steam" : "Dukkan") : foreground === "game" ? "Resume" : "Return to library", key: "resume", detail: storefrontId.length ? "Return to the active application" : foreground === "game" ? "Return to your game" : "Continue browsing your games" },
         { label: "Audio", key: "audio", detail: "Volume and audio output" },
-        { label: "Settings", key: "settings", detail: "Devices, connections and appearance" },
         { label: "Power", key: "power", detail: "Device power options" }
     ].concat(foreground === "library" ? [
         { label: "Storefronts", key: "storefronts", detail: "Dukkan and Steam" }
@@ -78,6 +94,8 @@ ShellRoot {
         { label: "Steam", key: "store-steam", detail: "Open your Steam library and store" }
     ]
     readonly property var settingsEntries: [
+        { label: "Audio", key: "audio", detail: "Volume and audio output" },
+        { label: "Notifications", key: "notification-settings", detail: "Do Not Disturb and shortcut reminders" },
         { label: "Controllers", key: "controllers", detail: "Connected controllers and active input profiles" },
         { label: "Network", key: "network", detail: "Connections and saved networks" },
         { label: "Bluetooth", key: "bluetooth", detail: "Pair and manage your devices" },
@@ -89,7 +107,7 @@ ShellRoot {
         { label: "Reboot", key: "reboot", detail: "Restart Zaman OS" },
         { label: "Sleep", key: "sleep", detail: "Coming soon", disabled: true }
     ]
-    readonly property var entries: page === "settings" ? settingsEntries : page === "power" ? powerEntries : page === "storefronts" ? storefrontEntries : mainEntries
+    readonly property var entries: page === "notification-settings" ? notificationSettings : page === "settings" ? settingsEntries : page === "power" ? powerEntries : page === "storefronts" ? storefrontEntries : mainEntries
 
     FontLoader {
         id: menuFont
@@ -187,11 +205,61 @@ ShellRoot {
             sessionKey:root.menuInstance + ":" + root.menuGeneration, generation:root.menuGeneration, inputOwned:root.menuOpen || root.opening || root.closing || !root.helperIdle}); }
     }
 
+    function rememberTab() {
+        tabLocations[activeTab] = {
+            page:page, selected:selected, returnPage:returnPage, pageEntry:pageEntry,
+            mainSelected:mainSelected, settingsSelected:settingsSelected, powerSelected:powerSelected,
+            scroll:listPage ? menuList.contentY : 0,
+            audio:page === "audio" && audioPageLoader.item ? audioPageLoader.item.location() : null
+        };
+    }
+    function restoreTab(index) {
+        activeTab = index;
+        var location = tabLocations[index];
+        mainSelected = location ? location.mainSelected : 0;
+        settingsSelected = location ? location.settingsSelected : 0;
+        powerSelected = location ? location.powerSelected : 0;
+        returnPage = location ? location.returnPage : "";
+        pageEntry = location ? location.pageEntry : ({label:"", key:"", detail:""});
+        page = location ? location.page : index === 0 ? "" : index === 1 ? "notifications" : "settings";
+        selected = location ? location.selected : 0;
+        if (listPage) selected = Math.max(0, Math.min(entries.length - 1, selected));
+        if (page === "audio" && audioPageLoader.item && location && location.audio)
+            audioPageLoader.item.restoreLocation(location.audio);
+        var revision = ++navigationRevision;
+        var targetPage = page;
+        var generation = menuGeneration;
+        Qt.callLater(() => {
+            if (menuOpen && activeTab === index && page === targetPage && navigationRevision === revision && menuGeneration === generation && listPage) {
+                menuList.forceLayout();
+                menuList.contentY = location ? location.scroll : 0;
+            }
+        });
+    }
+    function switchTab(direction) {
+        if (!canSwitchTab || direction === 0) return;
+        stopRepeat();
+        if (audioPageLoader.item) audioPageLoader.item.stopHorizontal();
+        keyboardCycleHeld = false;
+        rememberTab();
+        restoreTab((activeTab + direction % 3 + 3) % 3);
+    }
+    function notificationShortcut(clear) {
+        if (!menuOpen || exitBusy || editingKeyboard || !notifications.available) return;
+        stopRepeat();
+        if (page === "notifications") {
+            if (clear) notificationsPage.clear();
+            else notificationsPage.dismiss();
+        } else if (!clear && notifications.popups.length) {
+            notifications.send({action:"dismiss-visible"});
+        }
+    }
     function select(index) {
         selected = (index + entries.length) % entries.length;
         menuList.positionViewAtIndex(selected, ListView.Contain);
     }
     function move(direction) {
+        if (menuOpen && page === "notifications") { notificationsPage.move(direction); return; }
         if (menuOpen && (page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close")) { exitPage.move(direction); return; }
         if (menuOpen && page === "display") {
             displayPage.move(direction);
@@ -218,6 +286,11 @@ ShellRoot {
     }
     function activate() {
         if (!menuOpen || exitBusy) return;
+        if (page === "notifications") { stopRepeat(); notificationsPage.activate(); return; }
+        if (page === "notification-settings") {
+            notifications.send({action:"preferences", [entries[selected].key === "dnd" ? "dnd" : "steamReminder"]: entries[selected].key === "dnd" ? !notifications.preferences.dnd : !notifications.preferences.steamReminder});
+            return;
+        }
         if (page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close") { stopRepeat(); exitPage.activate(); return; }
         if (page === "display") {
             stopRepeat(); displayPage.activate(); return;
@@ -277,6 +350,12 @@ ShellRoot {
     function back() {
         if (exitBusy) return;
         stopRepeat();
+        if (page === "notifications") {
+            if (!notificationsPage.back()) closeMenu();
+            return;
+        }
+        if (page === "notification-settings") { leaveSettingsPage(); return; }
+        if (page === "settings" && activeTab === 2) { closeMenu(); return; }
         if (page === "display") { displayPage.back(); return; }
         if (page === "bluetooth" && bluetoothPageLoader.item) {
             bluetoothPageLoader.item.back();
@@ -317,13 +396,11 @@ ShellRoot {
         controllerWarning = "";
         displaySupported = false;
         bluetoothLoaded = false;
-        page = "";
-        selected = 0;
-        mainSelected = 0;
-        settingsSelected = 0;
-        powerSelected = 0;
-        returnPage = "";
-        pageEntry = ({ label: "", key: "", detail: "" });
+        audioLoaded = false;
+        networkLoaded = false;
+        notificationsPage.detail = null;
+        notificationsPage.confirming = false;
+        restoreTab(activeTab);
     }
     function openMenu() {
         // Repeated open requests never toggle a visible menu or overlap leases.
@@ -348,6 +425,13 @@ ShellRoot {
         return "opening";
     }
     function hideMenu() {
+        if (menuOpen) {
+            rememberTab();
+            // A new opening must not revive an old destructive confirmation.
+            if (["exit", "reboot", "shutdown", "store-close"].indexOf(page) >= 0) {
+                tabLocations[activeTab].page = returnPage;
+            }
+        }
         if ((menuOpen || opening) && bluetoothPageLoader.item) bluetoothPageLoader.item.shutdown();
         menuOpen = false;
         resetEntry();
@@ -372,10 +456,12 @@ ShellRoot {
     }
     function closeMenu() {
         if (exitBusy || closing || !(menuOpen || opening)) return;
+        var closePage = page;
+        var closeTab = activeTab;
         closing = true;
         hideMenu();
         // Hide the exclusive layer first, then let the helper restore the lease.
-        if (bridge.running) bridge.write(JSON.stringify({action: "close"}) + "\n");
+        if (bridge.running) bridge.write(JSON.stringify({action: "close", page: closePage, tab: closeTab}) + "\n");
         else resetMenuSession();
     }
     function input(event, value) {
@@ -385,12 +471,17 @@ ShellRoot {
         var next = Object.assign({}, pressed);
         next[event] = down;
         pressed = next;
+        if (event === "ui_l1" || event === "ui_r1") {
+            if (down && !wasDown) switchTab(event === "ui_l1" ? -1 : 1);
+            return;
+        }
         if (event === "ui_context" || event === "ui_action") {
             if (down && !wasDown && editingKeyboard && !keyboardCycleHeld) {
                 keyboardCycleHeld = true;
                 var keyboardPage = page === "network" ? networkPageLoader.item : bluetoothPageLoader.item;
                 if (keyboardPage) keyboardPage.cycleKeyboard();
-            } else if (!down && !pressed.ui_context && !pressed.ui_action) keyboardCycleHeld = false;
+            } else if (down && !wasDown && !editingKeyboard) notificationShortcut(event === "ui_action");
+            else if (!down && !pressed.ui_context && !pressed.ui_action) keyboardCycleHeld = false;
             return;
         }
         if (page === "display" && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
@@ -537,7 +628,7 @@ ShellRoot {
             resetEntry();
             entryPhase = "await-frame";
             menuOpen = true;
-            selected = 0;
+            restoreTab(activeTab);
             lastReadyMs = Date.now() - openStartedMs;
             console.info("Resident menu input ready after " + lastReadyMs + " ms");
         } else if (message.type === "controllers") {
@@ -804,9 +895,21 @@ ShellRoot {
                         }
                     }
                 }
+                MenuTabBar {
+                    width: parent.width
+                    height: implicitHeight
+                    uiScale: root.uiScale
+                    currentIndex: root.activeTab
+                    unread: notifications.unread
+                    controllerAvailable: root.controllerCount > 0
+                    enabled: root.canSwitchTab
+                    animate: root.menuOpen && root.entryPhase === "settled"
+                    onStepRequested: direction => root.switchTab(direction)
+                    onTabRequested: index => root.switchTab(index - root.activeTab)
+                }
                 Rectangle { width: parent.width; height: 1; color: "#265C6E85" }
                 MenuText {
-                    text: root.page === "" ? "System menu" : (root.page === "settings" ? "Settings" : root.page === "power" ? "Power" : root.pageEntry.label)
+                    text: root.page === "" ? "Home" : root.page === "notifications" ? "Notifications" : root.page === "notification-settings" ? "Notification preferences" : (root.page === "settings" ? "Settings" : root.page === "power" ? "Power" : root.pageEntry.label)
                     font.pixelSize: root.px(29)
                     font.weight: Font.DemiBold
                     color: "#F0E5D6"
@@ -819,7 +922,9 @@ ShellRoot {
                         color: "#88A8C9"
                     }
                     MenuText {
-                        text: root.page === "settings" ? "Devices, connections and personalization."
+                        text: root.page === "notifications" ? (notifications.error || (notifications.preferences.dnd ? "Do Not Disturb is on." : "Your recent system notifications."))
+                            : root.page === "notification-settings" ? "Popup and shortcut reminders."
+                            : root.page === "settings" ? "Devices, connections and personalization."
                             : root.page === "power" ? "Shutdown and reboot require confirmation."
                             : (root.storeNotice.length ? root.storeNotice : root.storeGame ? "Resume your game or close Steam and its game." : root.storefrontId.length ? "Your storefront is running." : root.foreground === "game" ? "Your game is still running." : "Your library is waiting.")
                         color: "#BBC6D3"
@@ -927,6 +1032,17 @@ ShellRoot {
                 }
             }
 
+            NotificationsPage {
+                id: notificationsPage
+                client: notifications
+                visible: root.page === "notifications"
+                uiScale: root.uiScale
+                anchors {
+                    left: parent.left; right: parent.right; top: heading.bottom; bottom: footer.top
+                    leftMargin: panel.padding; rightMargin: panel.padding
+                    topMargin: root.px(22); bottomMargin: root.px(18)
+                }
+            }
             DisplayPage {
                 id: displayPage
                 visible: root.page === "display"
@@ -946,32 +1062,32 @@ ShellRoot {
             Loader {
                 id: bluetoothPageLoader
                 visible: root.page === "bluetooth"
-                active: root.bluetoothLoaded && root.menuOpen
+                active: root.menuOpen && (root.bluetoothLoaded || root.page === "bluetooth")
                 source: active ? Qt.resolvedUrl("BluetoothPage.qml") : ""
                 anchors {
                     left: parent.left; right: parent.right; top: heading.bottom; bottom: footer.top
                     leftMargin: panel.padding; rightMargin: panel.padding
                     topMargin: root.px(22); bottomMargin: root.px(18)
                 }
-                onLoaded: item.uiScale = Qt.binding(() => root.uiScale)
+                onLoaded: { root.bluetoothLoaded = true; item.uiScale = Qt.binding(() => root.uiScale); }
             }
             Connections {
                 target: bluetoothPageLoader.item
                 function onBackRequested() { root.leaveSettingsPage(); }
                 function onNavigationReset() { root.stopRepeat(); }
             }
-            // Optional native integrations load only while their page is open.
+            // Visited native pages retain their views while this menu lease is open.
             Loader {
                 id: networkPageLoader
                 visible: root.page === "network"
-                active: root.page === "network" && root.menuOpen
+                active: root.menuOpen && (root.networkLoaded || root.page === "network")
                 source: active ? Qt.resolvedUrl("NetworkPage.qml") : ""
                 anchors {
                     left: parent.left; right: parent.right; top: heading.bottom; bottom: footer.top
                     leftMargin: panel.padding; rightMargin: panel.padding
                     topMargin: root.px(22); bottomMargin: root.px(18)
                 }
-                onLoaded: item.uiScale = Qt.binding(() => root.uiScale)
+                onLoaded: { root.networkLoaded = true; item.uiScale = Qt.binding(() => root.uiScale); }
             }
             Connections {
                 target: networkPageLoader.item
@@ -993,7 +1109,7 @@ ShellRoot {
             Loader {
                 id: audioPageLoader
                 visible: root.page === "audio"
-                active: root.page === "audio" && root.menuOpen
+                active: root.menuOpen && (root.audioLoaded || root.page === "audio")
                 source: active ? Qt.resolvedUrl("AudioPage.qml") : ""
                 anchors {
                     left: parent.left; right: parent.right; top: heading.bottom; bottom: footer.top
@@ -1001,8 +1117,11 @@ ShellRoot {
                     topMargin: root.px(22); bottomMargin: root.px(18)
                 }
                 onLoaded: {
+                    root.audioLoaded = true;
                     item.uiScale = Qt.binding(() => root.uiScale);
-                    item.active = true;
+                    item.active = Qt.binding(() => root.menuOpen && root.page === "audio");
+                    var location = root.tabLocations[root.activeTab];
+                    if (root.page === "audio" && location && location.audio) item.restoreLocation(location.audio);
                 }
             }
             Connections {
@@ -1111,7 +1230,7 @@ ShellRoot {
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: panel.padding }
                 spacing: root.px(12)
                 Rectangle { width: parent.width; height: 1; color: "#265C6E85" }
-                Row {
+                Flow {
                     width: parent.width
                     spacing: root.px(16)
                     id: navigationGuide
@@ -1121,22 +1240,24 @@ ShellRoot {
                         || (root.page === "bluetooth" && bluetoothPageLoader.item && bluetoothPageLoader.item.editingCode)
                     Repeater {
                         model: [
-                            {faces: navigationGuide.adjusting ? ["west", "east"] : navigationGuide.textEntry ? ["north", "south", "east", "west"] : ["north", "south"], label: navigationGuide.adjusting ? "Adjust ←→" : navigationGuide.textEntry ? "Move ↑↓←→" : "Navigate ↑↓", key: navigationGuide.adjusting ? "←→" : "↑↓"},
-                            {faces: ["south"], show: !navigationGuide.adjusting || (root.page === "audio" && audioPageLoader.item && audioPageLoader.item.rows[audioPageLoader.item.selected].key === "output"), label: navigationGuide.adjusting ? "Apply" : navigationGuide.textEntry ? "Select" : "Select / →", key: "↵"},
-                            {faces: ["east"], label: navigationGuide.adjusting || navigationGuide.textEntry ? "Back" : "Back / ←", key: "Esc"}
+                            {directional: true, label: navigationGuide.adjusting ? "Adjust" : navigationGuide.textEntry ? "Move" : "Navigate", key: navigationGuide.adjusting ? "←→" : navigationGuide.textEntry ? "↑↓←→" : "↑↓"},
+                            {faces: ["south"], show: !navigationGuide.adjusting || (root.page === "audio" && audioPageLoader.item && audioPageLoader.item.rows[audioPageLoader.item.selected].key === "output"), label: navigationGuide.adjusting ? "Apply" : "Select", key: "↵"},
+                            {faces: ["east"], label: "Back", key: "Esc"},
+                            {faces:["west"], show:notifications.available && !navigationGuide.textEntry && ((root.page !== "notifications" && notifications.popups.length > 0) || (root.page === "notifications" && !notificationsPage.blocked && notificationsPage.selected !== null)), label:root.page === "notifications" ? "Dismiss" : "Dismiss popups", key:"X"},
+                            {faces:["north"], show:notifications.available && root.page === "notifications" && !notificationsPage.blocked && notifications.records.length > 0, label:"Clear history", key:"Y"}
                         ]
                         delegate: Row {
                             required property var modelData
                             visible: modelData.show !== false
                             spacing: root.px(7)
                             MenuButtonDiamond {
-                                visible: root.controllerCount > 0
+                                visible: !modelData.directional && root.controllerCount > 0
                                 uiScale: root.uiScale
-                                activeFaces: modelData.faces
+                                activeFaces: modelData.faces || []
                                 width: implicitWidth; height: implicitHeight
                             }
                             MenuText {
-                                visible: root.controllerCount === 0
+                                visible: modelData.directional === true || root.controllerCount === 0
                                 text: modelData.key
                                 font.family: root.monoFontName
                                 font.pixelSize: root.px(12); color: "#EAC28D"
@@ -1159,11 +1280,20 @@ ShellRoot {
                     }
                     MenuText {
                         anchors.right: parent.right
-                        text: "PREVIEW"; color: "#9FADBF"; font.family: root.monoFontName
+                        text: root.exitBusy ? "PLEASE WAIT" : ""; color: "#9FADBF"; font.family: root.monoFontName
                         font.pixelSize: root.px(9); font.letterSpacing: 1
                     }
                 }
             }
+        }
+
+        NotificationToastStack {
+            anchors { top: parent.top; right: parent.right; margins: root.px(32) }
+            width: Math.min(root.px(420), parent.width - root.px(64))
+            uiScale: root.uiScale
+            popups: notifications.popups
+            visible: root.menuPresentsToasts
+            z: 100
         }
 
         FocusScope {
@@ -1172,6 +1302,14 @@ ShellRoot {
             focus: true
             enabled: root.menuOpen
             Keys.onPressed: event => {
+                if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)) {
+                    if (!event.isAutoRepeat) root.switchTab(event.key === Qt.Key_PageUp ? -1 : 1);
+                    event.accepted = true; return;
+                }
+                if (!root.editingKeyboard && (event.key === Qt.Key_X || event.key === Qt.Key_Y)) {
+                    if (!event.isAutoRepeat) root.notificationShortcut(event.key === Qt.Key_Y);
+                    event.accepted = true; return;
+                }
                 if (root.page === "bluetooth" && bluetoothPageLoader.item && bluetoothPageLoader.item.physicalKey(event)) {
                     event.accepted = true;
                     return;
