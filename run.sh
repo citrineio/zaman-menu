@@ -27,6 +27,7 @@ fi
 ZAMAN_MENU_DEV_PAIR="$ZAMAN_PROJECT_DIR/target/release/zaman-menu-dev-pair"
 if [ ! -x "$ZAMAN_MENU_DEV_PAIR" ]; then ZAMAN_MENU_DEV_PAIR=; fi
 export SWAYSOCK WAYLAND_DISPLAY XDG_RUNTIME_DIR ZAMAN_MENU_DEV_INPUT ZAMAN_MENU_DEV_PAIR
+export DUKKAN_TRANSACTION_CLIENT="${DUKKAN_TRANSACTION_CLIENT:-$HOME/projects/zaman-sprint5/dukkan/tools/transactions.py}"
 export ZAMAN_NOTIFICATION_CLIENT="$ZAMAN_PROTO_DIR/tools/zaman-notifications"
 export ZAMAN_MENU_SESSION_BRIDGE="$ZAMAN_PROTO_DIR/actions/zaman-menu-session.py"
 # Load the project's existing fonts privately in QML; no font installation.

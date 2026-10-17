@@ -53,9 +53,9 @@ const card=fs.readFileSync(path.join(__dirname,'../qml/NotificationToastCard.qml
 const match=card.match(/readonly property bool connectedSuccess: ([^\n]+)\n( +&&[^\n]+)/);
 const connected=match[1]+match[2];
 const accent=card.match(/readonly property string accent: ([^\n]+)/)[1];
-for(const [category,state,urgency,expected] of [['input','connected',1,'#8AB9A1'],['input','disconnected',1,'#FF9A90'],['input','connected',2,'#FF9A90'],['input','',1,'#EAC28D'],['network','connected',1,'#8AB9A1'],['network','error',1,'#FF9A90'],['bluetooth','enabled',1,'#8AB9A1'],['bluetooth','disabled',1,'#A4B5C8']]){
- const record={category,state,urgency};const connectedSuccess=vm.runInNewContext(connected,{record});
- assert.equal(vm.runInNewContext(accent,{record,connectedSuccess}),expected);checks++;
+for(const [category,state,urgency,expected] of [['input','connected',1,'#8AB9A1'],['input','disconnected',1,'#FF9A90'],['input','connected',2,'#FF9A90'],['input','',1,'#EAC28D'],['network','connected',1,'#8AB9A1'],['network','error',1,'#FF9A90'],['bluetooth','enabled',1,'#8AB9A1'],['bluetooth','disabled',1,'#A4B5C8'],['install','installed',1,'#8AB9A1'],['install','removed',1,'#EAC28D'],['install','error',1,'#FF9A90']]){
+ const record={category,state,urgency};const connectedSuccess=vm.runInNewContext(connected,{record}); const installSuccess=record.category === "install" && record.state === "installed";
+ assert.equal(vm.runInNewContext(accent,{record,connectedSuccess,installSuccess}),expected);checks++;
 }
 // The global surface yields to the menu's shared stack instead of being covered.
 const renderer=fs.readFileSync(path.join(__dirname,'../notification-shell.qml'),'utf8');

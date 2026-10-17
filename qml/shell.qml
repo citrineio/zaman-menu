@@ -34,6 +34,10 @@ ShellRoot {
     property var storeRequest: ({action:"", id:"", generation:"0"})
     property string storeNotice: ""
     property bool storeResultReceived: false
+    property var transactionJobs: []
+    property bool transactionsAvailable: false
+    readonly property int pendingTransactions: transactionJobs.filter(job => ["queued", "waiting", "running", "cancelling"].indexOf(job.phase) >= 0).length
+    readonly property string transactionClient: Quickshell.env("DUKKAN_TRANSACTION_CLIENT") || ""
     property int controllerCount: 0
     property bool displaySupported: false
     property var controllerDevices: []
@@ -64,7 +68,7 @@ ShellRoot {
     property string returnPage: ""
     property var pageEntry: ({ label: "", key: "", detail: "" })
     readonly property bool listPage: page === "" || page === "settings" || page === "power" || page === "storefronts" || page === "notification-settings"
-    readonly property bool navigationPage: page === "notifications" || listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close"
+    readonly property bool navigationPage: page === "transactions" || page === "notifications" || listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close"
     property int heldDirection: 0
     property int heldHorizontal: 0
     property bool keyboardCycleHeld: false
@@ -78,6 +82,7 @@ ShellRoot {
     readonly property string monoFontName: monoFont.status === FontLoader.Ready ? monoFont.name : "Monospace"
     readonly property var mainEntries: [
         { label: storefrontId.length ? "Resume " + (storefrontId === "steam" ? "Steam" : "Dukkan") : foreground === "game" ? "Resume" : "Return to library", key: "resume", detail: storefrontId.length ? "Return to the active application" : foreground === "game" ? "Return to your game" : "Continue browsing your games" },
+        { label: "Activity" + (pendingTransactions ? " · " + pendingTransactions : ""), key: "transactions", detail: pendingTransactions ? transactionJobs.find(job => ["queued", "waiting", "running", "cancelling"].indexOf(job.phase) >= 0).stage : "Dukkan transactions and results" },
         { label: "Audio", key: "audio", detail: "Volume and audio output" },
         { label: "Power", key: "power", detail: "Device power options" }
     ].concat(foreground === "library" ? [
@@ -259,6 +264,7 @@ ShellRoot {
         menuList.positionViewAtIndex(selected, ListView.Contain);
     }
     function move(direction) {
+        if (menuOpen && page === "transactions") { transactionActivity.move(direction); return; }
         if (menuOpen && page === "notifications") { notificationsPage.move(direction); return; }
         if (menuOpen && (page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close")) { exitPage.move(direction); return; }
         if (menuOpen && page === "display") {
@@ -286,6 +292,7 @@ ShellRoot {
     }
     function activate() {
         if (!menuOpen || exitBusy) return;
+        if (page === "transactions") { stopRepeat(); transactionActivity.activate(); return; }
         if (page === "notifications") { stopRepeat(); notificationsPage.activate(); return; }
         if (page === "notification-settings") {
             notifications.send({action:"preferences", [entries[selected].key === "dnd" ? "dnd" : "steamReminder"]: entries[selected].key === "dnd" ? !notifications.preferences.dnd : !notifications.preferences.steamReminder});
@@ -516,10 +523,43 @@ ShellRoot {
             else if (event === "ui_back" || event === "ui_cancel" || event === "ui_left" || event === "key_left") back();
         }
     }
-    function queueStoreAction(action, id, generation) {
+    function queueStoreAction(action, id, generation, target) {
         if (exitBusy || pendingStoreAction !== null || closing || !menuOpen || sessionActionPath.length === 0) return;
-        pendingStoreAction = ({action:action, id:id, generation:generation});
+        pendingStoreAction = ({action:action, id:id, generation:generation, target:target || ""});
         closeMenu();
+    }
+    function openTransaction(jobId) {
+        if (!/^[a-f0-9]{32}$/.test(jobId)) return;
+        if (foreground === "game" || storeGame) {
+            storeNotice = "Return to the library before opening Dukkan activity.";
+            return;
+        }
+        queueStoreAction("launch", "dukkan", "0", jobId);
+    }
+    Process {
+        id: transactionPoll
+        command: ["/usr/bin/python3", root.transactionClient, "snapshot"]
+        property bool received: false
+        onStarted: received = false
+        stdout: SplitParser {
+            onRead: line => {
+                try {
+                    var data = JSON.parse(line);
+                    if (data.type === "transactions") {
+                        transactionPoll.received = true;
+                        root.transactionsAvailable = true;
+                        root.transactionJobs = data.jobs || [];
+                    }
+                } catch (error) {}
+            }
+        }
+        onExited: (code, status) => { if (!received) root.transactionsAvailable = false; }
+    }
+    Timer {
+        interval: 1500; repeat: true
+        running: root.menuOpen && root.transactionClient.length > 0
+        triggeredOnStart: true
+        onTriggered: if (!transactionPoll.running) transactionPoll.running = true
     }
     function receiveStoreResult(line) {
         var result;
@@ -571,7 +611,7 @@ ShellRoot {
 
     Process {
         id: storeAction
-        command: ["/usr/bin/python3", root.sessionActionPath, "storefront", root.storeRequest.action, root.storeRequest.id, root.storeRequest.generation]
+        command: ["/usr/bin/python3", root.sessionActionPath, "storefront", root.storeRequest.action, root.storeRequest.id, root.storeRequest.generation].concat(root.storeRequest.target ? [root.storeRequest.target] : [])
         stdout: SplitParser { onRead: data => root.receiveStoreResult(data) }
         stderr: SplitParser { onRead: data => console.warn(data) }
         onExited: (exitCode, exitStatus) => {
@@ -909,7 +949,7 @@ ShellRoot {
                 }
                 Rectangle { width: parent.width; height: 1; color: "#265C6E85" }
                 MenuText {
-                    text: root.page === "" ? "Home" : root.page === "notifications" ? "Notifications" : root.page === "notification-settings" ? "Notification preferences" : (root.page === "settings" ? "Settings" : root.page === "power" ? "Power" : root.pageEntry.label)
+                    text: root.page === "" ? "Home" : root.page === "transactions" ? "Activity" : root.page === "notifications" ? "Notifications" : root.page === "notification-settings" ? "Notification preferences" : (root.page === "settings" ? "Settings" : root.page === "power" ? "Power" : root.pageEntry.label)
                     font.pixelSize: root.px(29)
                     font.weight: Font.DemiBold
                     color: "#F0E5D6"
@@ -922,7 +962,8 @@ ShellRoot {
                         color: "#88A8C9"
                     }
                     MenuText {
-                        text: root.page === "notifications" ? (notifications.error || (notifications.preferences.dnd ? "Do Not Disturb is on." : "Your recent system notifications."))
+                        text: root.page === "transactions" ? (root.storeNotice || "A opens the selected transaction in Dukkan · B goes back")
+                            : root.page === "notifications" ? (root.storeNotice || notifications.error || (notifications.preferences.dnd ? "Do Not Disturb is on." : "Your recent system notifications."))
                             : root.page === "notification-settings" ? "Popup and shortcut reminders."
                             : root.page === "settings" ? "Devices, connections and personalization."
                             : root.page === "power" ? "Shutdown and reboot require confirmation."
@@ -960,6 +1001,8 @@ ShellRoot {
                     required property var modelData
                     required property int index
                     chosen: root.selected === index
+                    readonly property bool storefrontMark: modelData.key === "store-dukkan" || modelData.key === "store-steam" || (modelData.key === "resume" && root.storefrontId.length > 0)
+                    readonly property bool dukkanMark: modelData.key === "store-dukkan" || (modelData.key === "resume" && root.storefrontId === "dukkan")
                     uiScale: root.uiScale
                     width: menuList.width
                     baseHeight: 66
@@ -971,20 +1014,22 @@ ShellRoot {
                     }
                     Rectangle {
                         x: root.px(14); y: Math.round((parent.height - height) / 2)
-                        width: root.px(42 + 4 * menuRow.focusAmount); height: width
+                        width: root.px(menuRow.storefrontMark ? 104 : 42 + 4 * menuRow.focusAmount)
+                        height: root.px(42 + 4 * menuRow.focusAmount)
                         radius: root.px(12)
                         color: menuRow.chosen ? "#16291D10" : "#112F425C"
                         MenuIcon {
                             anchors.centerIn: parent
-                            name: menuRow.modelData.key === "resume" && root.foreground !== "game" ? "library" : menuRow.modelData.key
+                            name: menuRow.modelData.key === "resume" && root.storefrontId.length ? "store-" + root.storefrontId : menuRow.modelData.key === "resume" && root.foreground !== "game" ? "library" : menuRow.modelData.key
                             ink: menuRow.chosen ? "#30271E" : "#DEC09A"
-                            width: root.px(30 + 2 * menuRow.focusAmount); height: width
+                            width: root.px(menuRow.dukkanMark ? 98 + 4 * menuRow.focusAmount : 30 + 2 * menuRow.focusAmount)
+                            height: menuRow.dukkanMark ? root.px(39 + 2 * menuRow.focusAmount) : width
                         }
                     }
                     Column {
-                        x: root.px(72)
+                        x: root.px(menuRow.storefrontMark ? 134 : 72)
                         y: Math.round((parent.height - height) / 2)
-                        width: parent.width - root.px(160)
+                        width: parent.width - x - root.px(88)
                         spacing: root.px(2)
                         MenuText {
                             width: parent.width
@@ -1032,9 +1077,24 @@ ShellRoot {
                 }
             }
 
+            TransactionActivityPage {
+                id: transactionActivity
+                visible: root.page === "transactions"
+                jobs: root.transactionJobs
+                available: root.transactionsAvailable
+                uiScale: root.uiScale
+                anchors {
+                    left: parent.left; right: parent.right; top: heading.bottom; bottom: footer.top
+                    leftMargin: panel.padding; rightMargin: panel.padding
+                    topMargin: root.px(22); bottomMargin: root.px(18)
+                }
+                onOpenTransaction: jobId => root.openTransaction(jobId)
+            }
             NotificationsPage {
                 id: notificationsPage
                 client: notifications
+                transactions: root.transactionsAvailable ? root.transactionJobs : []
+                onOpenTransaction: jobId => root.openTransaction(jobId)
                 visible: root.page === "notifications"
                 uiScale: root.uiScale
                 anchors {
@@ -1240,11 +1300,11 @@ ShellRoot {
                         || (root.page === "bluetooth" && bluetoothPageLoader.item && bluetoothPageLoader.item.editingCode)
                     Repeater {
                         model: [
-                            {directional: true, label: navigationGuide.adjusting ? "Adjust" : navigationGuide.textEntry ? "Move" : "Navigate", key: navigationGuide.adjusting ? "←→" : navigationGuide.textEntry ? "↑↓←→" : "↑↓"},
-                            {faces: ["south"], show: !navigationGuide.adjusting || (root.page === "audio" && audioPageLoader.item && audioPageLoader.item.rows[audioPageLoader.item.selected].key === "output"), label: navigationGuide.adjusting ? "Apply" : "Select", key: "↵"},
+                            {directional: true, show: root.page !== "notifications" || notificationsPage.hasItems, label: navigationGuide.adjusting ? "Adjust" : navigationGuide.textEntry ? "Move" : "Navigate", key: navigationGuide.adjusting ? "←→" : navigationGuide.textEntry ? "↑↓←→" : "↑↓"},
+                            {faces: ["south"], show: (root.page !== "notifications" || notificationsPage.hasItems) && (!navigationGuide.adjusting || (root.page === "audio" && audioPageLoader.item && audioPageLoader.item.rows[audioPageLoader.item.selected].key === "output")), label: navigationGuide.adjusting ? "Apply" : root.page === "notifications" && notificationsPage.selected && /^dukkan-transaction:/.test(notificationsPage.selected.target || "") ? "Open Dukkan" : "Select", key: "↵"},
                             {faces: ["east"], label: "Back", key: "Esc"},
-                            {faces:["west"], show:notifications.available && !navigationGuide.textEntry && ((root.page !== "notifications" && notifications.popups.length > 0) || (root.page === "notifications" && !notificationsPage.blocked && notificationsPage.selected !== null)), label:root.page === "notifications" ? "Dismiss" : "Dismiss popups", key:"X"},
-                            {faces:["north"], show:notifications.available && root.page === "notifications" && !notificationsPage.blocked && notifications.records.length > 0, label:"Clear history", key:"Y"}
+                            {faces:["west"], show:notifications.available && !navigationGuide.textEntry && ((root.page !== "notifications" && notifications.popups.length > 0) || (root.page === "notifications" && notificationsPage.hasItems && !notificationsPage.blocked && notificationsPage.selected !== null && !notificationsPage.selected.transaction)), label:root.page === "notifications" ? "Dismiss" : "Dismiss popups", key:"X"},
+                            {faces:["north"], show:notifications.available && root.page === "notifications" && notificationsPage.hasItems && !notificationsPage.blocked && notifications.records.length > 0, label:"Clear history", key:"Y"}
                         ]
                         delegate: Row {
                             required property var modelData

@@ -8,7 +8,8 @@ Rectangle {
     property bool closing:false
     readonly property bool connectedSuccess: ["input", "network", "bluetooth"].indexOf(record.category) >= 0
         && (record.state === "connected" || (record.category === "bluetooth" && record.state === "enabled"))
-    readonly property string accent: record.urgency === 2 || record.state === "error" || record.state === "disconnected" ? "#FF9A90" : connectedSuccess ? "#8AB9A1" : record.category === "bluetooth" && record.state === "disabled" ? "#A4B5C8" : "#EAC28D"
+    readonly property bool installSuccess: record.category === "install" && record.state === "installed"
+    readonly property string accent: record.urgency === 2 || record.state === "error" || record.state === "disconnected" ? "#FF9A90" : connectedSuccess || installSuccess ? "#8AB9A1" : record.category === "bluetooth" && record.state === "disabled" ? "#A4B5C8" : "#EAC28D"
     height:Math.round((record.body.length ? 92 : 68) * uiScale)
     radius:12 * uiScale
     color:"#F7171D28"

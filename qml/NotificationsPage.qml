@@ -3,19 +3,35 @@ import QtQml.Models
 
 Item {
     id: page
+    signal openTransaction(string jobId)
     property real uiScale: 1
     property var client
+    property var transactions: []
     property string selectedId: ""
     property var detail: null
     property var clearIds: []
     property bool confirming: false
     property int confirmSelected: 0
     readonly property bool blocked: confirming || detail !== null
-    readonly property var records: client ? client.records.filter(record => !record.dismissed) : []
+    readonly property var liveTransactions: transactions.filter(job => ["queued", "waiting", "running", "cancelling"].indexOf(job.phase) >= 0).map(job => ({
+        id: "transaction:" + job.id, transaction: true, jobId: job.id,
+        title: job.name + (job.operation === "install" ? " · Installing" : " · Removing"),
+        body: job.stage || job.phase, phase: job.phase, percent: job.percent,
+        category: "install", source: "Dukkan", timestamp: job.created,
+        urgency: 1, dismissed: false, target: "dukkan-transaction:" + job.id
+    }))
+    readonly property var records: liveTransactions.concat(client ? client.records.filter(record => !record.dismissed) : [])
+    readonly property bool hasItems: records.length > 0
     readonly property var selected: records.find(r => r.id === selectedId) || null
     function px(n) { return Math.round(n * uiScale); }
     ListModel { id: visibleRecords }
     function sync() {
+        if (!records.length) {
+            for (var emptyIndex = visibleRecords.count - 1; emptyIndex >= 0; --emptyIndex) visibleRecords.remove(emptyIndex);
+            selectedId = "";
+            detail = null;
+            return;
+        }
         // Preserve delegates and the nearest selected neighbor during dismissal.
         var oldIndex = 0;
         for (var i = 0; i < visibleRecords.count; ++i) if (visibleRecords.get(i).recordId === selectedId) oldIndex = i;
@@ -25,10 +41,9 @@ Item {
         for (var i = 0; i < records.length; ++i) {
             var found = -1;
             for (var j = i; j < visibleRecords.count; ++j) if (visibleRecords.get(j).recordId === records[i].id) found = j;
-            if (found < 0) visibleRecords.insert(i, {recordId:records[i].id, payload:records[i]});
+            if (found < 0) visibleRecords.insert(i, {recordId:records[i].id});
             else {
                 if (found !== i) visibleRecords.move(found, i, 1);
-                visibleRecords.setProperty(i, "payload", records[i]);
             }
         }
         // IDs keep focus anchored when newer records arrive above it.
@@ -51,6 +66,10 @@ Item {
             if (confirmSelected === 1) client.send({action:"clear", ids:clearIds});
             confirming = false; clearIds = []; return;
         }
+        var record = detail || selected;
+        if (record && /^dukkan-transaction:[a-f0-9]{32}$/.test(record.target || "")) {
+            openTransaction(record.target.slice(19)); return;
+        }
         if (!detail && selected) detail = Object.assign({}, selected);
     }
     function back() {
@@ -59,7 +78,7 @@ Item {
         return false;
     }
     function dismiss() {
-        if (!confirming && !detail && selected && client.available) client.send({action:"dismiss", id:selectedId});
+        if (!confirming && !detail && selected && !selected.transaction && client.available) client.send({action:"dismiss", id:selectedId});
     }
     function clear() {
         if (blocked || !client.records.length || !client.available) return;
@@ -71,8 +90,9 @@ Item {
 
     ListView {
         id: history
+        objectName: "notificationHistory"
         anchors.fill: parent
-        visible: !page.blocked
+        visible: page.hasItems && !page.blocked
         model: visibleRecords
         add: Transition { NumberAnimation { property:"opacity"; from:0; to:1; duration:120 } }
         remove: Transition {
@@ -87,21 +107,35 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         delegate: Rectangle {
             id: notificationRow
-            required property var payload
+            required property string recordId
+            property var payload: ({})
+            objectName: "notification-row:" + recordId
+            // ListModel carries only the stable string ID. Keep the actual
+            // record as a JS object, including during a removal animation.
+            function updateRecord() {
+                var current = page.records.find(record => record.id === recordId);
+                if (current) payload = current;
+            }
+            onRecordIdChanged: updateRecord()
+            Component.onCompleted: updateRecord()
+            Connections {
+                target: page
+                function onRecordsChanged() { notificationRow.updateRecord(); }
+            }
             // Keep the horizontal exit separate from ListView's row placement.
             property real dismissOffset: 0
             property bool retiring: false
             ListView.onRemove: retiring = true
             transform: Translate { x: notificationRow.dismissOffset }
-            readonly property bool chosen: payload.id === page.selectedId
+            readonly property bool chosen: recordId === page.selectedId
             width: history.width
-            height: page.px(96)
+            height: page.px(notificationRow.payload.transaction ? 122 : 96)
             radius: page.px(12)
-            color: chosen ? "#EAC28D" : "#1D2634"
+            color: notificationRow.chosen ? "#EAC28D" : "#1D2634"
             MenuIcon {
                 x: page.px(14); y: page.px(20)
                 width: page.px(29); height: width
-                name: payload.category
+                name: notificationRow.payload.category || "system"
                 ink: parent.chosen ? "#30271E" : "#DEC09A"
             }
             Column {
@@ -110,28 +144,58 @@ Item {
                 spacing: page.px(4)
                 MenuText {
                     width: parent.width
-                    text: payload.title
+                    objectName: "notification-title:" + notificationRow.recordId
+                    text: notificationRow.payload.title || "Notification"
                     font.pixelSize: page.px(22)
                     elide: Text.ElideRight
-                    color: chosen ? "#211E1B" : "#ECEEF1"
+                    color: notificationRow.chosen ? "#211E1B" : "#ECEEF1"
                 }
                 MenuText {
                     width: parent.width
-                    text: (payload.urgency === 2 ? "Critical · " : "") + page.stamp(payload) + (payload.source ? " · " + payload.source : "")
+                    text: notificationRow.payload.transaction ? notificationRow.payload.phase + " · " + notificationRow.payload.body : (notificationRow.payload.urgency === 2 ? "Critical · " : "") + page.stamp(notificationRow.payload) + (notificationRow.payload.source ? " · " + notificationRow.payload.source : "")
                     font.pixelSize: page.px(14)
                     elide: Text.ElideRight
-                    color: chosen ? "#473627" : "#BBC6D3"
+                    color: notificationRow.chosen ? "#473627" : "#BBC6D3"
+                }
+                MenuText {
+                    visible: notificationRow.payload.transaction === true
+                    objectName: "notification-progress:" + notificationRow.recordId
+                    width: parent.width
+                    text: typeof notificationRow.payload.percent === "number" ? Math.round(notificationRow.payload.percent) + "% · current step" : "Waiting for progress…"
+                    font.pixelSize: page.px(14)
+                    color: notificationRow.chosen ? "#473627" : "#BBC6D3"
+                }
+                Rectangle {
+                    id: progressTrack
+                    visible: notificationRow.payload.transaction === true
+                    width: parent.width; height: page.px(6); radius: height / 2
+                    color: notificationRow.chosen ? "#40503922" : "#35465C"
+                    clip: true
+                    Rectangle {
+                        id: progressFill
+                        readonly property bool determinate: typeof notificationRow.payload.percent === "number"
+                        width: parent.width * (determinate ? Math.max(0, Math.min(100, notificationRow.payload.percent)) / 100 : .3)
+                        height: parent.height; radius: height / 2
+                        color: notificationRow.chosen ? "#614930" : "#88A8C9"
+                        NumberAnimation on x {
+                            running: page.visible && notificationRow.payload.transaction === true && !progressFill.determinate
+                            from: -progressFill.width; to: progressTrack.width
+                            duration: 1200; loops: Animation.Infinite
+                        }
+                        onDeterminateChanged: if (determinate) x = 0
+                    }
                 }
             }
             MouseArea {
                 anchors.fill: parent
                 enabled: !notificationRow.retiring
-                onClicked: { page.selectedId = payload.id; page.activate(); }
+                onClicked: { page.selectedId = notificationRow.payload.id; page.activate(); }
             }
         }
     }
     Column {
-        visible: !page.records.length && !page.blocked
+        objectName: "notificationEmpty"
+        visible: !page.hasItems && !page.blocked
         width: parent.width
         spacing: page.px(15)
         MenuIcon { name:"notifications"; width:page.px(42); height:width; ink:"#DEC09A" }

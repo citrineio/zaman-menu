@@ -1,4 +1,5 @@
 """Bounded notification state; no D-Bus, Qt or device dependencies."""
+import copy
 import json
 import os
 import re
@@ -30,6 +31,8 @@ class Model:
         self.revision = 0
         self.error = ''
         self.event_times = {}
+        self.transaction_receipts = {}
+        self._defer_save = False
         self.last_prune = self.clock()
         self.load()
 
@@ -40,6 +43,12 @@ class Model:
             data = json.loads(self.path.read_text())
             if not isinstance(data, dict) or data.get('version') != 1 or not isinstance(data.get('records'), list):
                 raise ValueError('unsupported notification history')
+            receipts = data.get('transactionReceipts', {})
+            if not isinstance(receipts, dict) or len(receipts) > 64 or any(
+                not re.fullmatch('[a-f0-9]{32}', key) or type(value) is not int or value < 0
+                for key, value in receipts.items()):
+                raise ValueError('invalid transaction receipts')
+            self.transaction_receipts = receipts
             preferences = data.get('preferences', {})
             if not isinstance(preferences, dict):
                 raise ValueError('invalid preferences')
@@ -70,7 +79,9 @@ class Model:
     @staticmethod
     def target(value):
         # Only a reserved typed route. Never a command, URI or executable.
-        return 'transfer-pending' if value == 'transfer-pending' else ''
+        if value == 'transfer-pending':
+            return value
+        return value if isinstance(value, str) and re.fullmatch(r'dukkan-transaction:[a-f0-9]{32}', value) else ''
 
     def prune(self):
         cutoff = self.clock() - MAX_AGE
@@ -93,13 +104,17 @@ class Model:
         self.queue = [rid for rid in self.queue if rid in kept]
         self.visible = [rid for rid in self.visible if rid in kept]
 
-    def save(self):
+    def save(self, strict=False):
+        if self._defer_save:
+            return
         self.prune()
-        data = json.dumps({'version': 1, 'preferences': self.preferences,
+        data = json.dumps({'version': 1, 'preferences': self.preferences, 'transactionReceipts': self.transaction_receipts,
                            'records': [{k: v for k, v in r.items() if not k.startswith('_')} for r in self.records]},
                           ensure_ascii=False, separators=(',', ':')).encode()
         if len(data) > MAX_BYTES:
             self.error = 'History size limit reached'
+            if strict:
+                raise OSError(self.error)
             return
         temporary = None
         try:
@@ -110,8 +125,15 @@ class Model:
                 out.flush()
                 os.fsync(out.fileno())
             os.replace(temporary, self.path)
+            directory_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         except OSError as error:
             self.error = 'History could not be saved: ' + str(error)
+            if strict:
+                raise
         finally:
             if temporary and os.path.exists(temporary):
                 os.unlink(temporary)
@@ -279,6 +301,33 @@ class Model:
         return self.snapshot()
 
     def event(self, source, key, title, body='', category='system', state='', target=''):
+        # Ordered outbox keys use a persisted high-water mark independent of
+        # history retention/dismissal. One atomic file commit precedes the ACK.
+        durable = re.fullmatch(r'transaction:([a-f0-9]{32}):([1-9][0-9]{0,15})', key) if source == 'Dukkan' else None
+        if durable:
+            if self.error.startswith('History could not be loaded:'):
+                raise RuntimeError('Repair notification history before acknowledging durable events')
+            namespace, sequence = durable[1], int(durable[2])
+            previous = self.transaction_receipts.get(namespace, 0)
+            if sequence <= previous:
+                return
+            if sequence != previous + 1:
+                raise ValueError('transaction delivery is out of order')
+            if namespace not in self.transaction_receipts and len(self.transaction_receipts) >= 64:
+                raise ValueError('transaction receipt namespace limit reached')
+            before = copy.deepcopy(self.__dict__)
+            try:
+                self._defer_save = True
+                self.notify(source, title, body, {'x-zaman-kind': category,
+                    'x-zaman-state': state, 'x-zaman-target': target}, owner='producer:' + source)
+                self.transaction_receipts[namespace] = sequence
+                self._defer_save = False
+                self.save(strict=True)
+            except BaseException:
+                self.__dict__.clear()
+                self.__dict__.update(before)
+                raise
+            return
         if key.startswith('steam:') and not self.preferences['steamReminder']:
             return
         now = self.clock()

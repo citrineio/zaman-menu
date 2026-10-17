@@ -27,7 +27,7 @@ assert.match(qml,/MenuShoulderGlyph/);
 assert.doesNotMatch(qml,/text: "[LR]1"/);
 const page=fs.readFileSync(path.join(__dirname,'../qml/NotificationsPage.qml'),'utf8');
 const binding=page.match(/readonly property var records: ([^\n]+)/)[1];
-const records=vm.runInNewContext(binding,{client:{records:[{id:'kept',dismissed:false},{id:'hidden',dismissed:true}]}});
+const records=vm.runInNewContext(binding,{liveTransactions:[],client:{records:[{id:'kept',dismissed:false},{id:'hidden',dismissed:true}]}});
 assert.deepEqual(Array.from(records,r=>r.id),['kept']);checks++;
 const shell=fs.readFileSync(path.join(__dirname,'../qml/shell.qml'),'utf8');
 assert.match(shell,/notificationShortcut\(event === "ui_action"\)/,'matches the reported effective controller mapping');
@@ -41,7 +41,7 @@ for(const mode of ['navigate','adjust','text'])for(const controllerCount of [0,1
  const context={navigationGuide:{adjusting:mode==='adjust',textEntry:mode==='text'},
   root:{page:mode==='adjust'?'audio':'notifications',controllerCount},
   audioPageLoader:{item:{rows:[{key:'output'}],selected:0}},
-  notifications:{available:true,popups:[],records:[{}]},notificationsPage:{blocked:false,selected:{}}};
+  notifications:{available:true,popups:[],records:[{}]},notificationsPage:{hasItems:true,blocked:false,selected:{}}};
  const entries=vm.runInNewContext('('+legend+')',context);
  assert.equal(entries[0].key,mode==='adjust'?'←→':mode==='text'?'↑↓←→':'↑↓');
  for(const modelData of entries){

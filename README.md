@@ -15,7 +15,8 @@ published for development and integration; it is not a general desktop shell.
 
 - **Home:** resume, exit a managed game, open Dukkan or Steam, and reach system actions.
 - **Notifications:** view history, dismiss individual items, clear captured history,
-  enable Do Not Disturb, and control the Steam shortcut reminder.
+  enable Do Not Disturb, and control the Steam shortcut reminder. Queued/running
+  Dukkan jobs appear as live activity; transaction results open their relevant view.
 - **Settings:** audio output and mute, network connections, Bluetooth devices,
   controllers, and display resolution/refresh with a timed Keep/Revert preview.
 - **Controller navigation:** animated tabs, positional button icons, shoulder
@@ -86,7 +87,11 @@ Python and command-line examples, supported hints, expiry, replacement and dismi
 The service refuses to replace another desktop's notification server.
 
 System event producers are in zaman-sessiond. Dukkan sends terminal install/remove
-results. Notifications are best-effort and never block the game/session lifecycle.
+results through a durable ordered outbox; the notification server saves its receipt
+before acknowledging. Lost ACKs, clear and dismissal do not create duplicate
+terminal records. Progress is a live view rather than percentage-history updates.
+System-event notifications remain separate from game/session lifecycle success.
+See [Sprint 5 transactions and branding](docs/sprint5-transactions.md).
 
 ## Diagnostics and tests
 

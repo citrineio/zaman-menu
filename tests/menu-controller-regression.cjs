@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../qml/shell.qml'), 'utf8');
 const functions = source.match(/^    function \w+\([^\n]*\) \{[^\n]*\}$|^    function \w+\([^\n]*\) \{[\s\S]*?^    \}/gm);
-assert.equal(functions.length, 32, 'all root functions must be exercised from the real source');
+assert.equal(functions.length, 33, 'all root functions must be exercised from the real source');
 let checks = 0;
 function fixture(page = '') {
   const state = {root:null, activeTab:0, tabLocations:[null,null,null], navigationRevision:0, audioLoaded:false, networkLoaded:false, bluetoothLoaded:false,
@@ -23,6 +23,7 @@ function fixture(page = '') {
     horizontalDelay:{stop:()=>{}, restart:()=>{}}, horizontalStep:{stop:()=>{}, start:()=>{}},
     menuList:{contentY:0, forceLayout:()=>{}, positionViewAtIndex:()=>{}}, ListView:{Contain:0},
     bluetoothPageLoader:{item:null}, networkPageLoader:{item:null}, audioPageLoader:{item:null},
+    transactionActivity:{move:()=>{},activate:()=>{}}, transactionJobs:[], transactionsAvailable:true, pendingTransactions:0,
     controllersPage:{move:()=>{}, activate:()=>{}},
     displayPage:{receive:()=>state.actions.push('display'), back:()=>state.actions.push('back'),
       activate:()=>{}, horizontal:()=>{}, move:()=>{}},
@@ -44,7 +45,7 @@ function staysOpen(state, originalPage) {
   assert.equal(state.quit,0); assert.equal(state.page,originalPage);
   assert.equal(state.writes.filter(x=>x.action === 'close').length,0); checks++;
 }
-for (const page of ['', 'settings', 'controllers', 'audio', 'network', 'bluetooth', 'display', 'appearance', 'exit', 'reboot', 'shutdown', 'storefronts', 'store-close','notifications','notification-settings']) {
+for (const page of ['', 'settings', 'controllers', 'audio', 'network', 'bluetooth', 'display', 'appearance', 'exit', 'reboot', 'shutdown', 'storefronts', 'store-close','notifications','notification-settings','transactions']) {
   const state = fixture(page);
   state.heldDirection = -1; state.pressed = {ui_up:true};
   for (let i=0; i<20; i++) {

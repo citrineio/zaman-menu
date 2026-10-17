@@ -175,6 +175,8 @@ def serve(renderer=True):
                     msg.get('title', 'Notification'), msg.get('body', ''), msg.get('category', 'system'),
                     msg.get('state', ''), msg.get('target', ''))
                 result = snapshot()
+                if str(msg.get('source')) == 'Dukkan' and __import__('re').fullmatch(r'transaction:[a-f0-9]{32}:[1-9][0-9]{0,15}', msg['key']):
+                    result['acceptedEvent'] = msg['key']
             else:
                 model.command(msg, identity)
                 result = snapshot()

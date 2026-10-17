@@ -67,7 +67,25 @@ def main():
             restored=request({'action':'snapshot'})
             assert len(restored['records'])==2 and not restored['visible']
             assert not any(r['live'] for r in restored['records'])
-            print('PASS: real private D-Bus Notify/replacement, expiry, CloseNotification, ownership conflict and restart history')
+            event = dict(action='event', source='Dukkan', key='transaction:' + 'a' * 32 + ':1',
+                         title='Installed', category='install', state='installed',
+                         target='dukkan-transaction:' + 'b' * 32)
+            delivered = request(event)
+            assert delivered['acceptedEvent'] == event['key']
+            transaction_id = delivered['records'][0]['id']
+            assert delivered['records'][0]['target'] == event['target']
+            child.terminate();child.wait(4)
+            child = start()
+            repeated = request(event)
+            assert repeated['acceptedEvent'] == event['key']
+            assert len(repeated['records']) == 3 and not repeated['visible']
+            request({'action':'clear', 'ids':[transaction_id]})
+            child.terminate();child.wait(4)
+            child = start()
+            repeated = request(event)
+            assert repeated['acceptedEvent'] == event['key']
+            assert len(repeated['records']) == 2 and not repeated['visible']
+            print('PASS: private D-Bus protocol/history and durable transaction ACK/restart/clear deduplication')
         finally:
             child.terminate();child.wait(4)
 

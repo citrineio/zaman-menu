@@ -2,6 +2,7 @@
 """One exit action on the session bus; sessiond owns emulator shutdown."""
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import sys
@@ -136,10 +137,30 @@ def storefront_action(call, action, id, generation, emit_event=emit, clock=time.
     emit_event('store-result', ok=True, message='')
 
 
+def transaction_request(action, job_id):
+    if not re.fullmatch(r'[a-f0-9]{32}', job_id):
+        raise ValueError('Invalid transaction target')
+    path = Path(os.environ['XDG_RUNTIME_DIR']) / 'dukkan-transactions/control.sock'
+    with socket.socket(socket.AF_UNIX) as peer:
+        peer.settimeout(4)
+        peer.connect(str(path))
+        peer.sendall((json.dumps({'action': action, 'id': job_id}) + '\n').encode())
+        data = bytearray()
+        while b'\n' not in data:
+            block = peer.recv(65536)
+            if not block or len(data) > 2 * 1024 * 1024:
+                raise RuntimeError('Incomplete transaction service reply')
+            data.extend(block)
+        result = json.loads(data.split(b'\n', 1)[0])
+        if result.get('type') != 'transactions' or result.get('job', {}).get('id') != job_id:
+            raise RuntimeError(result.get('error', 'Transaction target is unavailable'))
+        return result['job']
+
+
 def main():
     lock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        is_store = len(sys.argv) == 5 and sys.argv[1] == 'storefront'
+        is_store = len(sys.argv) in (5, 6) and sys.argv[1] == 'storefront'
         if not is_store and (len(sys.argv) != 2 or sys.argv[1] not in ('exit-game', 'reboot', 'shutdown')):
             raise RuntimeError('Expected exit-game, reboot or shutdown.')
         runtime = os.environ['XDG_RUNTIME_DIR']
@@ -161,7 +182,15 @@ def main():
                                  Gio.DBusCallFlags.NO_AUTO_START, 5000, None).unpack()
 
         if is_store:
-            storefront_action(call, *sys.argv[2:])
+            if len(sys.argv) == 6:
+                if sys.argv[2:5] != ['launch', 'dukkan', '0']:
+                    raise ValueError('Transaction navigation must launch Dukkan')
+                transaction_request('get', sys.argv[5])
+                storefront_action(call, *sys.argv[2:5], emit_event=lambda *args, **kwargs: None)
+                transaction_request('navigate', sys.argv[5])
+                emit('store-result', ok=True, message='')
+            else:
+                storefront_action(call, *sys.argv[2:])
         elif sys.argv[1] == 'exit-game':
             exit_game(call)
         else:
