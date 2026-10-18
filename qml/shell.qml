@@ -51,8 +51,9 @@ ShellRoot {
     readonly property bool menuPresentsToasts: menuOpen && notifications.available && notifications.outputPresent
         && overlay.screen !== null && overlay.screen.name === notifications.outputName
     readonly property var notificationSettings: [
-        {key:"dnd", label:"Do Not Disturb", detail:notifications.preferences.dnd ? "On · Critical alerts remain visible" : "Off · Show routine popups"},
-        {key:"steam-reminder", label:"Steam menu shortcut reminder", detail:notifications.preferences.steamReminder ? "On · Start + Select reminder when Steam opens" : "Off · Reminder disabled"}
+        {key:"dnd", preference:"dnd", label:"Do Not Disturb", detail:notifications.preferences.dnd ? "On · Critical alerts remain visible" : "Off · Show routine popups"},
+        {key:"steam-startup", preference:"steamStartup", label:"Steam startup notice", detail:notifications.preferences.steamStartup ? "On · Notice while starting Steam" : "Off · Startup notice disabled"},
+        {key:"steam-reminder", preference:"steamReminder", label:"Steam menu shortcut reminder", detail:notifications.preferences.steamReminder ? "On · Start + Select reminder when Steam opens" : "Off · Reminder disabled"}
     ]
     NotificationClient {
         id: notifications
@@ -100,7 +101,7 @@ ShellRoot {
     ]
     readonly property var settingsEntries: [
         { label: "Audio", key: "audio", detail: "Volume and audio output" },
-        { label: "Notifications", key: "notification-settings", detail: "Do Not Disturb and shortcut reminders" },
+        { label: "Notifications", key: "notification-settings", detail: "Do Not Disturb and Steam notices" },
         { label: "Controllers", key: "controllers", detail: "Connected controllers and active input profiles" },
         { label: "Network", key: "network", detail: "Connections and saved networks" },
         { label: "Bluetooth", key: "bluetooth", detail: "Pair and manage your devices" },
@@ -295,7 +296,8 @@ ShellRoot {
         if (page === "transactions") { stopRepeat(); transactionActivity.activate(); return; }
         if (page === "notifications") { stopRepeat(); notificationsPage.activate(); return; }
         if (page === "notification-settings") {
-            notifications.send({action:"preferences", [entries[selected].key === "dnd" ? "dnd" : "steamReminder"]: entries[selected].key === "dnd" ? !notifications.preferences.dnd : !notifications.preferences.steamReminder});
+            var preference = entries[selected].preference;
+            notifications.send({action:"preferences", [preference]: !notifications.preferences[preference]});
             return;
         }
         if (page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close") { stopRepeat(); exitPage.activate(); return; }
@@ -964,7 +966,7 @@ ShellRoot {
                     MenuText {
                         text: root.page === "transactions" ? (root.storeNotice || "A opens the selected transaction in Dukkan · B goes back")
                             : root.page === "notifications" ? (root.storeNotice || notifications.error || (notifications.preferences.dnd ? "Do Not Disturb is on." : "Your recent system notifications."))
-                            : root.page === "notification-settings" ? "Popup and shortcut reminders."
+                            : root.page === "notification-settings" ? "Popup preferences and Steam notices."
                             : root.page === "settings" ? "Devices, connections and personalization."
                             : root.page === "power" ? "Shutdown and reboot require confirmation."
                             : (root.storeNotice.length ? root.storeNotice : root.storeGame ? "Resume your game or close Steam and its game." : root.storefrontId.length ? "Your storefront is running." : root.foreground === "game" ? "Your game is still running." : "Your library is waiting.")

@@ -8,7 +8,7 @@ Item {
     property var records: []
     property var popups: []
     property int unread: 0
-    property var preferences: ({dnd:false, steamReminder:true})
+    property var preferences: ({dnd:false, steamReminder:true, steamStartup:true})
     property bool viewing: false
     property bool presentingMenu: false
     property bool menuOpen: false
@@ -29,7 +29,7 @@ Item {
         records = data.records || [];
         popups = data.visible || [];
         unread = data.unread || 0;
-        preferences = data.preferences || ({dnd:false, steamReminder:true});
+        preferences = data.preferences || ({dnd:false, steamReminder:true, steamStartup:true});
         menuOpen = data.menuOpen === true;
         if (data.renderer && typeof data.renderer.output === "string") {
             outputName = data.renderer.output;

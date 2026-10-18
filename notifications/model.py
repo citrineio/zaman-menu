@@ -23,7 +23,7 @@ class Model:
         self.path, self.clock = Path(path), clock
         self.generation = uuid.uuid4().hex
         self.records, self.live, self.queue, self.visible = [], {}, [], []
-        self.preferences = {'dnd': False, 'steamReminder': True}
+        self.preferences = {'dnd': False, 'steamReminder': True, 'steamStartup': True}
         self.viewers = set()
         self.presenters = set()
         self.closed = []
@@ -52,6 +52,9 @@ class Model:
             preferences = data.get('preferences', {})
             if not isinstance(preferences, dict):
                 raise ValueError('invalid preferences')
+            # Preserve a user's disabled Steam alerts when adding the new control.
+            if 'steamStartup' not in preferences:
+                preferences['steamStartup'] = preferences.get('steamReminder', True)
             self.preferences = {k: preferences.get(k, v) is True
                                 for k, v in self.preferences.items()}
             seen = set()
@@ -328,7 +331,10 @@ class Model:
                 self.__dict__.update(before)
                 raise
             return
-        if key.startswith('steam:') and not self.preferences['steamReminder']:
+        if key.startswith('steam:launch:'):
+            if not self.preferences['steamStartup']:
+                return
+        elif key.startswith('steam:') and not self.preferences['steamReminder']:
             return
         now = self.clock()
         # Typed producer keys; repeated callbacks cannot create another event.
