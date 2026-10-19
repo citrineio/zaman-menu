@@ -76,6 +76,11 @@ Item {
                 line([[6,10],[6,16],[3,18],[21,18],[18,16],[18,10]], false);
                 ctx.beginPath(); ctx.arc(12,19,2,0,Math.PI); ctx.stroke();
                 break;
+            case "scrape":
+            case "artwork":
+                box(3,4,18,16,2); circle(8,9,1.5,false);
+                line([[4,18],[10,12],[14,16],[17,12],[21,16]],false);
+                break;
             case "battery":
                 box(3,6,17,12,2); line([[22,10],[22,14]],false);
                 line([[6,9],[6,15]],false); break;

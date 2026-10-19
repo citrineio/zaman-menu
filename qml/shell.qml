@@ -12,6 +12,7 @@ ShellRoot {
     property bool opening: false
     property bool ready: false
     property bool closing: false
+    property var closeOrigin: ({page:"",tab:0})
     property bool helperIdle: false
     property double openStartedMs: 0
     property double lastReadyMs: -1
@@ -38,6 +39,57 @@ ShellRoot {
     property bool transactionsAvailable: false
     readonly property int pendingTransactions: transactionJobs.filter(job => ["queued", "waiting", "running", "cancelling"].indexOf(job.phase) >= 0).length
     readonly property string transactionClient: Quickshell.env("DUKKAN_TRANSACTION_CLIENT") || ""
+    readonly property string transferClient: Quickshell.env("ZAMAN_TRANSFER_CLIENT") || ""
+    property var transferSnapshot: ({jobs:[],systems:[],enabled:false})
+    property bool transferAvailable: false
+    property string transferError: ""
+    property var transferRequest: ({action:"snapshot"})
+    readonly property int pendingImports: transferSnapshot.pending || 0
+    property var scrapeReturnLocation: ({page:"",returnPage:"",entry:({label:"",key:"",detail:""})})
+    function openTransfers() {
+        stopRepeat();
+        returnPage = page;
+        pageEntry = ({label:"Transfer Games",key:"transfer",detail:"Receive and import games"});
+        page = "transfer";
+    }
+    function openScraping(importId, system, jobId) {
+        stopRepeat();
+        scrapeReturnLocation=({page:page,returnPage:returnPage,entry:pageEntry});
+        if (page === "") mainSelected=selected;
+        pageEntry=({label:"Artwork & Game Info",key:"scrape",detail:"Covers, screenshots and descriptions"});
+        scrapePage.open(importId || "",system || "",jobId || "");
+        page="scrape";
+    }
+    function transferResult(line) {
+        try {
+            var result = JSON.parse(line);
+            if (result.type === "transfer") {
+                transferSnapshot = result;
+                transferAvailable = true;
+                transferError = "";
+            } else if (result.type === "error") transferError = result.error;
+        } catch (error) { transferError = "Invalid receiver response"; }
+    }
+    Process {
+        id: transferPoll
+        property bool received: false
+        command:["/usr/bin/python3",root.transferClient,"snapshot"]
+        onStarted: received = false
+        stdout: SplitParser { onRead: line => { transferPoll.received = true; root.transferResult(line); } }
+        onExited: (code, status) => { if (code !== 0 || !received) root.transferAvailable = false; }
+    }
+    Process {
+        id: transferAction
+        command:["/usr/bin/python3",root.transferClient,"request"]
+        stdinEnabled:true
+        onStarted:write(JSON.stringify(root.transferRequest)+"\n")
+        stdout: SplitParser { onRead: line => root.transferResult(line) }
+    }
+    Timer {
+        interval:1000; repeat:true; triggeredOnStart:true
+        running:root.menuOpen && root.transferClient.length > 0
+        onTriggered: if (!transferPoll.running && !transferAction.running) transferPoll.running = true
+    }
     property int controllerCount: 0
     property bool displaySupported: false
     property var controllerDevices: []
@@ -47,7 +99,7 @@ ShellRoot {
     property int navigationRevision: 0
     property bool audioLoaded: false
     property bool networkLoaded: false
-    readonly property bool canSwitchTab: menuOpen && !exitBusy
+    readonly property bool canSwitchTab: menuOpen && !closing && !exitBusy
     readonly property bool menuPresentsToasts: menuOpen && notifications.available && notifications.outputPresent
         && overlay.screen !== null && overlay.screen.name === notifications.outputName
     readonly property var notificationSettings: [
@@ -69,13 +121,14 @@ ShellRoot {
     property string returnPage: ""
     property var pageEntry: ({ label: "", key: "", detail: "" })
     readonly property bool listPage: page === "" || page === "settings" || page === "power" || page === "storefronts" || page === "notification-settings"
-    readonly property bool navigationPage: page === "transactions" || page === "notifications" || listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close"
+    readonly property bool navigationPage: page === "scrape" || page === "transfer" || page === "transactions" || page === "notifications" || listPage || page === "audio" || page === "controllers" || page === "network" || page === "bluetooth" || page === "display" || page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close"
     property int heldDirection: 0
     property int heldHorizontal: 0
     property bool keyboardCycleHeld: false
     property var pressed: ({})
     readonly property bool editingKeyboard: page === "network" && networkPageLoader.item && networkPageLoader.item.editingPassword
         || page === "bluetooth" && bluetoothPageLoader.item && bluetoothPageLoader.item.editingCode
+        || page === "scrape" && scrapePage.editingText
     readonly property real uiScale: Math.max(0.65, Math.min(1.4, overlay.height / 1080))
     readonly property string helperPath: Quickshell.env("ZAMAN_MENU_DEV_INPUT") || ""
     readonly property string uiFontName: "Sans Serif"
@@ -84,6 +137,8 @@ ShellRoot {
     readonly property var mainEntries: [
         { label: storefrontId.length ? "Resume " + (storefrontId === "steam" ? "Steam" : "Dukkan") : foreground === "game" ? "Resume" : "Return to library", key: "resume", detail: storefrontId.length ? "Return to the active application" : foreground === "game" ? "Return to your game" : "Continue browsing your games" },
         { label: "Activity" + (pendingTransactions ? " · " + pendingTransactions : ""), key: "transactions", detail: pendingTransactions ? transactionJobs.find(job => ["queued", "waiting", "running", "cancelling"].indexOf(job.phase) >= 0).stage : "Dukkan transactions and results" },
+        { label: "Transfer Games" + (pendingImports ? " · " + pendingImports : ""), key: "transfer", detail: "Receive games and review pending imports" },
+        { label: "Artwork & Game Info", key: "scrape", detail: "Find covers, screenshots and descriptions" },
         { label: "Audio", key: "audio", detail: "Volume and audio output" },
         { label: "Power", key: "power", detail: "Device power options" }
     ].concat(foreground === "library" ? [
@@ -148,6 +203,7 @@ ShellRoot {
         heldHorizontal = 0;
     }
     function hold(direction, immediate) {
+        if (closing) return;
         stopRepeat();
         if (direction === 0 || !menuOpen || !navigationPage) return;
         heldDirection = direction;
@@ -162,10 +218,12 @@ ShellRoot {
     }
     function moveHorizontal(direction) {
         if (!editingKeyboard) return;
-        if (page === "network") networkPageLoader.item.horizontal(direction);
+        if (page === "scrape") scrapePage.horizontal(direction);
+        else if (page === "network") networkPageLoader.item.horizontal(direction);
         else bluetoothPageLoader.item.horizontal(direction);
     }
     function holdHorizontal(direction, immediate) {
+        if (closing) return;
         stopRepeat();
         if (direction === 0 || !menuOpen || !editingKeyboard) return;
         heldHorizontal = direction;
@@ -251,9 +309,14 @@ ShellRoot {
         restoreTab((activeTab + direction % 3 + 3) % 3);
     }
     function notificationShortcut(clear) {
-        if (!menuOpen || exitBusy || editingKeyboard || !notifications.available) return;
+        if (!menuOpen || closing || exitBusy || editingKeyboard || (["transfer","scrape"].indexOf(page)<0 && !notifications.available)) return;
         stopRepeat();
-        if (page === "notifications") {
+        if (page === "scrape") {
+            if (clear) scrapePage.clear();else scrapePage.dismiss();
+        } else if (page === "transfer") {
+            if (clear) transferPage.clear();
+            else transferPage.dismiss();
+        } else if (page === "notifications") {
             if (clear) notificationsPage.clear();
             else notificationsPage.dismiss();
         } else if (!clear && notifications.popups.length) {
@@ -265,6 +328,9 @@ ShellRoot {
         menuList.positionViewAtIndex(selected, ListView.Contain);
     }
     function move(direction) {
+        if (closing) return;
+        if (menuOpen && page === "scrape") { scrapePage.move(direction); return; }
+        if (menuOpen && page === "transfer") { transferPage.move(direction); return; }
         if (menuOpen && page === "transactions") { transactionActivity.move(direction); return; }
         if (menuOpen && page === "notifications") { notificationsPage.move(direction); return; }
         if (menuOpen && (page === "exit" || page === "reboot" || page === "shutdown" || page === "store-close")) { exitPage.move(direction); return; }
@@ -292,7 +358,9 @@ ShellRoot {
         select(selected + direction);
     }
     function activate() {
-        if (!menuOpen || exitBusy) return;
+        if (!menuOpen || closing || exitBusy) return;
+        if (page === "scrape") { stopRepeat();scrapePage.activate();return; }
+        if (page === "transfer") { stopRepeat(); transferPage.activate(); return; }
         if (page === "transactions") { stopRepeat(); transactionActivity.activate(); return; }
         if (page === "notifications") { stopRepeat(); notificationsPage.activate(); return; }
         if (page === "notification-settings") {
@@ -335,6 +403,7 @@ ShellRoot {
         else if (entry.key === "store-home") queueStoreAction("home", storefrontId, storeGeneration);
         else if (entry.key === "store-close") { returnPage = page; pageEntry = entry; page = "store-close"; }
         else if (entry.key === "resume") closeMenu();
+        else if (entry.key === "scrape") openScraping("","","");
         else if (entry.key === "settings" || entry.key === "power" || entry.key === "storefronts") {
             mainSelected = selected;
             pageEntry = entry;
@@ -357,10 +426,21 @@ ShellRoot {
         select(settingsSelected);
     }
     function back() {
-        if (exitBusy) return;
+        if (exitBusy || closing) return;
         stopRepeat();
+        if (page === "scrape") {
+            if (!scrapePage.back()) {
+                page=scrapeReturnLocation.page;returnPage=scrapeReturnLocation.returnPage;pageEntry=scrapeReturnLocation.entry;
+                if (listPage) select(mainSelected);
+            }
+            return;
+        }
         if (page === "notifications") {
             if (!notificationsPage.back()) closeMenu();
+            return;
+        }
+        if (page === "transfer") {
+            if (!transferPage.back()) { page = returnPage; if (listPage) select(mainSelected); }
             return;
         }
         if (page === "notification-settings") { leaveSettingsPage(); return; }
@@ -452,6 +532,8 @@ ShellRoot {
     function resetEntry() {
         entryPhase = "hidden";
         slideIn.stop();
+        slideOut.stop();
+        closeDeadline.stop();
         panel.entryProgress = 0;
     }
     function startEntryFrame() {
@@ -463,18 +545,32 @@ ShellRoot {
         slideIn.restart();
         bridge.write(JSON.stringify({action: "opened"}) + "\n");
     }
-    function closeMenu() {
-        if (exitBusy || closing || !(menuOpen || opening)) return;
-        var closePage = page;
-        var closeTab = activeTab;
+    function closeMenu(completed) {
+        if (completed === true) {
+            if (!closing || entryPhase !== "closing") return;
+            var origin = closeOrigin;
+            entryPhase = "hidden";
+            hideMenu();
+            // Unmap the exclusive layer before the helper restores input.
+            if (bridge.running) bridge.write(JSON.stringify({action:"close",page:origin.page,tab:origin.tab}) + "\n");
+            else resetMenuSession();
+            return;
+        }
+        if ((exitBusy && completed !== "exit-complete") || closing || !(menuOpen || opening)) return;
+        closeOrigin = ({page:page,tab:activeTab});
         closing = true;
-        hideMenu();
-        // Hide the exclusive layer first, then let the helper restore the lease.
-        if (bridge.running) bridge.write(JSON.stringify({action: "close", page: closePage, tab: closeTab}) + "\n");
-        else resetMenuSession();
+        stopRepeat(); pressed = ({}); keyboardCycleHeld = false;
+        slideIn.stop();
+        entryPhase = "closing";
+        if (menuOpen && overlay.backingWindowVisible && panel.entryProgress > 0 && bridge.running) {
+            slideOut.from = panel.entryProgress;
+            slideOut.duration = Math.max(1,Math.round(slideIn.duration * panel.entryProgress));
+            closeDeadline.restart();
+            slideOut.restart();
+        } else closeMenu(true);
     }
     function input(event, value) {
-        if (!menuOpen || typeof value !== "number" || !isFinite(value)) return;
+        if (!menuOpen || closing || typeof value !== "number" || !isFinite(value)) return;
         var down = value > 0.5;
         var wasDown = pressed[event] === true;
         var next = Object.assign({}, pressed);
@@ -487,7 +583,7 @@ ShellRoot {
         if (event === "ui_context" || event === "ui_action") {
             if (down && !wasDown && editingKeyboard && !keyboardCycleHeld) {
                 keyboardCycleHeld = true;
-                var keyboardPage = page === "network" ? networkPageLoader.item : bluetoothPageLoader.item;
+                var keyboardPage = page === "scrape" ? scrapePage : page === "network" ? networkPageLoader.item : bluetoothPageLoader.item;
                 if (keyboardPage) keyboardPage.cycleKeyboard();
             } else if (down && !wasDown && !editingKeyboard) notificationShortcut(event === "ui_action");
             else if (!down && !pressed.ui_context && !pressed.ui_action) keyboardCycleHeld = false;
@@ -495,7 +591,7 @@ ShellRoot {
         }
         if (page === "display" && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
             if (down && !wasDown) displayPage.horizontal(event === "ui_left" || event === "key_left" ? -1 : 1);
-        } else if ((page === "bluetooth" || page === "network") && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
+        } else if ((page === "bluetooth" || page === "network" || page === "scrape" && editingKeyboard) && (event === "ui_left" || event === "ui_right" || event === "key_left" || event === "key_right")) {
             var horizontal = event === "ui_left" || event === "key_left" ? -1 : 1;
             if (editingKeyboard) {
                 if (down && !wasDown) holdHorizontal(horizontal, true);
@@ -573,7 +669,7 @@ ShellRoot {
     function requestExitGame() {
         if (page === "store-close") { queueStoreAction("close", storefrontId, storeGeneration); return; }
         var power = page === "reboot" || page === "shutdown";
-        if (exitBusy || !menuOpen || (!power && (page !== "exit" || foreground !== "game"))) return;
+        if (exitBusy || closing || !menuOpen || (!power && (page !== "exit" || foreground !== "game"))) return;
         if (sessionActionPath.length === 0) {
             exitNotice = "The menu action helper is unavailable. Restart the menu service after updating.";
             return;
@@ -597,11 +693,7 @@ ShellRoot {
             // prevents a second running=true while its first result is draining.
             if (message.ok) {
                 foreground = "library";
-                if (menuOpen || opening) {
-                    closing = true;
-                    hideMenu();
-                    if (bridge.running) bridge.write(JSON.stringify({action: "close"}) + "\n");
-                }
+                if (menuOpen || opening) closeMenu("exit-complete");
             }
         }
     }
@@ -805,7 +897,8 @@ ShellRoot {
                 console.info("Resident menu visible after " + root.lastVisibleMs + " ms");
                 Qt.callLater(() => inputScope.forceActiveFocus());
             } else if (!backingWindowVisible) {
-                root.resetEntry();
+                if (root.closing && root.entryPhase === "closing") root.closeMenu(true);
+                else root.resetEntry();
             }
         }
         onClosed: root.closeMenu()
@@ -831,8 +924,24 @@ ShellRoot {
             }
         }
 
+        NumberAnimation {
+            id: slideOut
+            target: panel
+            property: "entryProgress"
+            to: 0
+            duration: slideIn.duration
+            easing.type: Easing.InCubic
+            onFinished: root.closeMenu(true)
+        }
+        Timer {
+            id: closeDeadline
+            interval: 600
+            onTriggered: root.closeMenu(true)
+        }
+
         Rectangle {
             anchors.fill: parent
+            opacity: panel.entryProgress
             gradient: Gradient {
                 orientation: Gradient.Horizontal
                 GradientStop { position: 0.0; color: "#89080C13" }
@@ -964,7 +1073,8 @@ ShellRoot {
                         color: "#88A8C9"
                     }
                     MenuText {
-                        text: root.page === "transactions" ? (root.storeNotice || "A opens the selected transaction in Dukkan · B goes back")
+                        text: root.page === "transfer" ? "A selects · B returns · Receiving continues when this view closes"
+                            : root.page === "transactions" ? (root.storeNotice || "A opens the selected transaction in Dukkan · B goes back")
                             : root.page === "notifications" ? (root.storeNotice || notifications.error || (notifications.preferences.dnd ? "Do Not Disturb is on." : "Your recent system notifications."))
                             : root.page === "notification-settings" ? "Popup preferences and Steam notices."
                             : root.page === "settings" ? "Devices, connections and personalization."
@@ -1079,6 +1189,39 @@ ShellRoot {
                 }
             }
 
+            TransferPage {
+                id: transferPage
+                visible: root.page === "transfer"
+                snapshot: root.transferSnapshot
+                available: root.transferAvailable
+                busy: transferAction.running
+                error: root.transferError
+                uiScale: root.uiScale
+                onOpenScraping:(importId,system,jobId)=>root.openScraping(importId,system,jobId)
+                anchors {
+                    left:parent.left; right:parent.right; top:heading.bottom; bottom:footer.top
+                    leftMargin:panel.padding; rightMargin:panel.padding
+                    topMargin:root.px(22); bottomMargin:root.px(18)
+                }
+                onCommand: request => {
+                    if (!transferAction.running && root.transferClient.length > 0) {
+                        root.transferRequest = request;
+                        transferAction.running = true;
+                    }
+                }
+            }
+            ScrapePage {
+                id:scrapePage
+                visible:root.page === "scrape"
+                snapshot:root.transferSnapshot.scraper || ({available:false,folders:[],jobs:[]})
+                available:root.transferAvailable;busy:transferAction.running;error:root.transferError;uiScale:root.uiScale
+                onCloseRequested:root.closeMenu()
+                anchors { left:parent.left;right:parent.right;top:heading.bottom;bottom:footer.top
+                    leftMargin:panel.padding;rightMargin:panel.padding;topMargin:root.px(22);bottomMargin:root.px(18) }
+                onCommand:request=>{
+                    if (!transferAction.running && root.transferClient.length>0) { root.transferRequest=request;transferAction.running=true; }
+                }
+            }
             TransactionActivityPage {
                 id: transactionActivity
                 visible: root.page === "transactions"
@@ -1095,6 +1238,10 @@ ShellRoot {
             NotificationsPage {
                 id: notificationsPage
                 client: notifications
+                imports: root.transferSnapshot.jobs || []
+                scrapes:root.transferSnapshot.scraper ? root.transferSnapshot.scraper.jobs || [] : []
+                onOpenScrape:jobId=>root.openScraping("","",jobId)
+                onOpenTransfer: root.openTransfers()
                 transactions: root.transactionsAvailable ? root.transactionJobs : []
                 onOpenTransaction: jobId => root.openTransaction(jobId)
                 visible: root.page === "notifications"
@@ -1300,13 +1447,14 @@ ShellRoot {
                         || (root.page === "audio" && audioPageLoader.item && audioPageLoader.item.adjustable)
                     readonly property bool textEntry: (root.page === "network" && networkPageLoader.item && networkPageLoader.item.editingPassword)
                         || (root.page === "bluetooth" && bluetoothPageLoader.item && bluetoothPageLoader.item.editingCode)
+                        || (root.page === "scrape" && scrapePage.editingText)
                     Repeater {
                         model: [
                             {directional: true, show: root.page !== "notifications" || notificationsPage.hasItems, label: navigationGuide.adjusting ? "Adjust" : navigationGuide.textEntry ? "Move" : "Navigate", key: navigationGuide.adjusting ? "←→" : navigationGuide.textEntry ? "↑↓←→" : "↑↓"},
-                            {faces: ["south"], show: (root.page !== "notifications" || notificationsPage.hasItems) && (!navigationGuide.adjusting || (root.page === "audio" && audioPageLoader.item && audioPageLoader.item.rows[audioPageLoader.item.selected].key === "output")), label: navigationGuide.adjusting ? "Apply" : root.page === "notifications" && notificationsPage.selected && /^dukkan-transaction:/.test(notificationsPage.selected.target || "") ? "Open Dukkan" : "Select", key: "↵"},
+                            {faces: ["south"], show: (root.page !== "notifications" || notificationsPage.hasItems) && (!navigationGuide.adjusting || (root.page === "audio" && audioPageLoader.item && audioPageLoader.item.rows[audioPageLoader.item.selected].key === "output")), label: navigationGuide.adjusting ? "Apply" : root.page === "notifications" && notificationsPage.selected && /^dukkan-transaction:/.test(notificationsPage.selected.target || "") ? "Open Dukkan" : root.page === "notifications" && notificationsPage.selected && notificationsPage.selected.target === "transfer-pending" ? "Open Transfer" : "Select", key: "↵"},
                             {faces: ["east"], label: "Back", key: "Esc"},
-                            {faces:["west"], show:notifications.available && !navigationGuide.textEntry && ((root.page !== "notifications" && notifications.popups.length > 0) || (root.page === "notifications" && notificationsPage.hasItems && !notificationsPage.blocked && notificationsPage.selected !== null && !notificationsPage.selected.transaction)), label:root.page === "notifications" ? "Dismiss" : "Dismiss popups", key:"X"},
-                            {faces:["north"], show:notifications.available && root.page === "notifications" && notificationsPage.hasItems && !notificationsPage.blocked && notifications.records.length > 0, label:"Clear history", key:"Y"}
+                            {faces:["west"], show:root.page === "scrape" ? scrapePage.canDismiss : root.page === "transfer" ? transferPage.canDismiss : notifications.available && !navigationGuide.textEntry && ((root.page !== "notifications" && notifications.popups.length > 0) || (root.page === "notifications" && notificationsPage.hasItems && !notificationsPage.blocked && notificationsPage.selected !== null && !notificationsPage.selected.transaction && !notificationsPage.selected.transfer && !notificationsPage.selected.scrape)), label:root.page === "notifications" || root.page === "transfer" || root.page === "scrape" ? "Dismiss" : "Dismiss popups", key:"X"},
+                            {faces:["north"], show:root.page === "scrape" ? scrapePage.canClear : root.page === "transfer" ? transferPage.canClear : notifications.available && root.page === "notifications" && notificationsPage.hasItems && !notificationsPage.blocked && notifications.records.length > 0, label:"Clear history", key:"Y"}
                         ]
                         delegate: Row {
                             required property var modelData
@@ -1364,6 +1512,7 @@ ShellRoot {
             focus: true
             enabled: root.menuOpen
             Keys.onPressed: event => {
+                if (root.closing) { event.accepted = true; return; }
                 if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)) {
                     if (!event.isAutoRepeat) root.switchTab(event.key === Qt.Key_PageUp ? -1 : 1);
                     event.accepted = true; return;
@@ -1380,6 +1529,7 @@ ShellRoot {
                     event.accepted = true;
                     return;
                 }
+                if (root.page === "scrape" && scrapePage.physicalKey(event)) { event.accepted=true;return; }
                 if (event.key === Qt.Key_Up) {
                     if (!event.isAutoRepeat) root.input("key_up", 1);
                 } else if (event.key === Qt.Key_Down) {
@@ -1396,6 +1546,7 @@ ShellRoot {
                 event.accepted = true;
             }
             Keys.onReleased: event => {
+                if (root.closing) { event.accepted = true; return; }
                 if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
                     if (!event.isAutoRepeat) root.input(event.key === Qt.Key_Up ? "key_up" : "key_down", 0);
                     event.accepted = true;
@@ -1404,6 +1555,13 @@ ShellRoot {
                     event.accepted = true;
                 }
             }
+        }
+        MouseArea {
+            anchors.fill: parent
+            z: 200
+            visible: root.closing
+            acceptedButtons: Qt.AllButtons
+            onWheel: event => { event.accepted = true; }
         }
     }
 }

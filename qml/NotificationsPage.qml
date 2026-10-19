@@ -4,6 +4,19 @@ import QtQml.Models
 Item {
     id: page
     signal openTransaction(string jobId)
+    signal openTransfer()
+    signal openScrape(string jobId)
+    property var scrapes: []
+    readonly property var liveScrapes: scrapes.filter(j => !j.automatic && ["queued","running","needs-input","waiting-library","publishing"].indexOf(j.phase)>=0).map(j => ({
+        id:"scrape:"+j.id,scrape:true,title:"Artwork & Game Info · "+j.folders.join(", "),body:j.stage,
+        source:"Zaman Artwork & Game Info",timestamp:j.created,target:"scrape-pending:"+j.id,urgency:1,dismissed:false
+    }))
+    property var imports: []
+    readonly property var liveImports: imports.filter(j => ["complete","cancelled","failed"].indexOf(j.phase) < 0).map(j => ({
+        id:"transfer:" + j.id, transfer:true, title:j.name, body:j.error || j.evidence || j.phase,
+        category:"transfer", source:"Zaman Transfer · " + j.phase, timestamp:j.created,
+        urgency:1, dismissed:false, target:"transfer-pending"
+    }))
     property real uiScale: 1
     property var client
     property var transactions: []
@@ -11,6 +24,7 @@ Item {
     property var detail: null
     property var clearIds: []
     property bool confirming: false
+    property bool finishingRemoval: false
     property int confirmSelected: 0
     readonly property bool blocked: confirming || detail !== null
     readonly property var liveTransactions: transactions.filter(job => ["queued", "waiting", "running", "cancelling"].indexOf(job.phase) >= 0).map(job => ({
@@ -20,13 +34,14 @@ Item {
         category: "install", source: "Dukkan", timestamp: job.created,
         urgency: 1, dismissed: false, target: "dukkan-transaction:" + job.id
     }))
-    readonly property var records: liveTransactions.concat(client ? client.records.filter(record => !record.dismissed) : [])
+    readonly property var records: liveImports.concat(liveScrapes).concat(liveTransactions).concat(client ? client.records.filter(record => !record.dismissed) : [])
     readonly property bool hasItems: records.length > 0
     readonly property var selected: records.find(r => r.id === selectedId) || null
     function px(n) { return Math.round(n * uiScale); }
     ListModel { id: visibleRecords }
     function sync() {
         if (!records.length) {
+            if (visibleRecords.count > 0) { finishingRemoval = false; finishingRemoval = true; }
             for (var emptyIndex = visibleRecords.count - 1; emptyIndex >= 0; --emptyIndex) visibleRecords.remove(emptyIndex);
             selectedId = "";
             detail = null;
@@ -53,6 +68,8 @@ Item {
         });
     }
     onRecordsChanged: sync()
+    onFinishingRemovalChanged: if (finishingRemoval) emptyDelay.restart()
+    Timer { id:emptyDelay; interval:240; onTriggered:page.finishingRemoval=false }
     function move(direction) {
         if (confirming) { confirmSelected = (confirmSelected + direction + 2) % 2; return; }
         if (detail) { details.contentY = Math.max(0, Math.min(details.contentHeight - details.height, details.contentY + direction * px(70))); return; }
@@ -70,6 +87,8 @@ Item {
         if (record && /^dukkan-transaction:[a-f0-9]{32}$/.test(record.target || "")) {
             openTransaction(record.target.slice(19)); return;
         }
+        if (record && record.target === "transfer-pending") { openTransfer(); return; }
+        if (record && /^scrape-pending:[a-f0-9]{32}$/.test(record.target || "")) { openScrape(record.target.slice(15));return; }
         if (!detail && selected) detail = Object.assign({}, selected);
     }
     function back() {
@@ -78,7 +97,7 @@ Item {
         return false;
     }
     function dismiss() {
-        if (!confirming && !detail && selected && !selected.transaction && client.available) client.send({action:"dismiss", id:selectedId});
+        if (!confirming && !detail && selected && !selected.transaction && !selected.transfer && !selected.scrape && client.available) client.send({action:"dismiss", id:selectedId});
     }
     function clear() {
         if (blocked || !client.records.length || !client.available) return;
@@ -92,7 +111,7 @@ Item {
         id: history
         objectName: "notificationHistory"
         anchors.fill: parent
-        visible: page.hasItems && !page.blocked
+        visible: page.hasItems && !page.blocked || page.finishingRemoval && !page.blocked
         model: visibleRecords
         add: Transition { NumberAnimation { property:"opacity"; from:0; to:1; duration:120 } }
         remove: Transition {
@@ -195,7 +214,7 @@ Item {
     }
     Column {
         objectName: "notificationEmpty"
-        visible: !page.hasItems && !page.blocked
+        visible: !page.hasItems && !page.blocked && !page.finishingRemoval
         width: parent.width
         spacing: page.px(15)
         MenuIcon { name:"notifications"; width:page.px(42); height:width; ink:"#DEC09A" }

@@ -27,7 +27,7 @@ assert.match(qml,/MenuShoulderGlyph/);
 assert.doesNotMatch(qml,/text: "[LR]1"/);
 const page=fs.readFileSync(path.join(__dirname,'../qml/NotificationsPage.qml'),'utf8');
 const binding=page.match(/readonly property var records: ([^\n]+)/)[1];
-const records=vm.runInNewContext(binding,{liveTransactions:[],client:{records:[{id:'kept',dismissed:false},{id:'hidden',dismissed:true}]}});
+const records=vm.runInNewContext(binding,{liveImports:[],liveScrapes:[],liveTransactions:[],client:{records:[{id:'kept',dismissed:false},{id:'hidden',dismissed:true}]}});
 assert.deepEqual(Array.from(records,r=>r.id),['kept']);checks++;
 const shell=fs.readFileSync(path.join(__dirname,'../qml/shell.qml'),'utf8');
 assert.match(shell,/notificationShortcut\(event === "ui_action"\)/,'matches the reported effective controller mapping');
