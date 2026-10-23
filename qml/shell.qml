@@ -23,6 +23,10 @@ ShellRoot {
     readonly property string menuInstance: Date.now().toString()
     property int menuGeneration: 0
     property string sessionAction: "exit-game"
+    property bool emulatorMenuAvailable: false
+    property bool pendingEmulatorMenu: false
+    property bool emulatorMenuResultReceived: false
+    property string emulatorMenuNotice: ""
     property bool exitBusy: false
     property bool exitResultReceived: false
     property string exitNotice: ""
@@ -136,12 +140,15 @@ ShellRoot {
     readonly property string monoFontName: monoFont.status === FontLoader.Ready ? monoFont.name : "Monospace"
     readonly property var mainEntries: [
         { label: storefrontId.length ? "Resume " + (storefrontId === "steam" ? "Steam" : "Dukkan") : foreground === "game" ? "Resume" : "Return to library", key: "resume", detail: storefrontId.length ? "Return to the active application" : foreground === "game" ? "Return to your game" : "Continue browsing your games" },
+    ].concat(foreground === "game" && !storefrontId.length && emulatorMenuAvailable ? [
+        { label: "Emulator Menu", key: "emulator-menu", detail: "Open the emulator's native menu and save controls" },
+    ] : []).concat([
         { label: "Activity" + (pendingTransactions ? " · " + pendingTransactions : ""), key: "transactions", detail: pendingTransactions ? transactionJobs.find(job => ["queued", "waiting", "running", "cancelling"].indexOf(job.phase) >= 0).stage : "Dukkan transactions and results" },
         { label: "Transfer Games" + (pendingImports ? " · " + pendingImports : ""), key: "transfer", detail: "Receive games and review pending imports" },
         { label: "Artwork & Game Info", key: "scrape", detail: "Find covers, screenshots and descriptions" },
         { label: "Audio", key: "audio", detail: "Volume and audio output" },
         { label: "Power", key: "power", detail: "Device power options" }
-    ].concat(foreground === "library" ? [
+    ]).concat(foreground === "library" ? [
         { label: "Storefronts", key: "storefronts", detail: "Dukkan and Steam" }
     ] : []).concat(storefrontId.length && !storeGame ? [
         { label: "Return to library", key: "store-home", detail: "Keep the storefront running in the background" }
@@ -403,6 +410,13 @@ ShellRoot {
         else if (entry.key === "store-home") queueStoreAction("home", storefrontId, storeGeneration);
         else if (entry.key === "store-close") { returnPage = page; pageEntry = entry; page = "store-close"; }
         else if (entry.key === "resume") closeMenu();
+        else if (entry.key === "emulator-menu") {
+            // Execute only after release of A, reverse animation and helper-idle.
+            if (foreground !== "game" || !emulatorMenuAvailable || pendingEmulatorMenu) return;
+            pendingEmulatorMenu = true;
+            emulatorMenuNotice = "";
+            closeMenu();
+        }
         else if (entry.key === "scrape") openScraping("","","");
         else if (entry.key === "settings" || entry.key === "power" || entry.key === "storefronts") {
             mainSelected = selected;
@@ -484,6 +498,7 @@ ShellRoot {
         controllerDevices = [];
         controllerWarning = "";
         displaySupported = false;
+        emulatorMenuAvailable = false;
         bluetoothLoaded = false;
         audioLoaded = false;
         networkLoaded = false;
@@ -616,7 +631,13 @@ ShellRoot {
                     : (directionPressed(-1) ? -1 : (directionPressed(1) ? 1 : 0));
                 if (remaining !== heldDirection) hold(remaining, false);
             }
+        } else if (!down && wasDown && event === "ui_accept" && page === ""
+                   && entries[selected] && entries[selected].key === "emulator-menu") {
+            activate();
         } else if (down && !wasDown) {
+            // The emulator action waits for button release before restoring gameplay input.
+            if (event === "ui_accept" && page === "" && entries[selected]
+                    && entries[selected].key === "emulator-menu") return;
             if (event === "ui_accept" || event === "ui_right" || event === "key_right") activate();
             else if (event === "ui_back" || event === "ui_cancel" || event === "ui_left" || event === "key_left") back();
         }
@@ -722,6 +743,38 @@ ShellRoot {
         stderr: SplitParser { onRead: data => console.warn(data) }
         onExited: (exitCode, exitStatus) => root.finishExitAction(exitCode)
     }
+    Process {
+        id: emulatorMenuCapability
+        command: ["/usr/bin/python3", root.sessionActionPath, "emulator-menu-capability"]
+        stdout: SplitParser { onRead: line => {
+            try {
+                let msg = JSON.parse(line);
+                if (msg.type === "emulator-menu-capability" && root.menuOpen && !root.closing
+                        && root.foreground === "game") root.emulatorMenuAvailable = msg.available === true;
+            } catch (error) { console.warn(error); }
+        } }
+        stderr: SplitParser { onRead: line => console.warn(line) }
+    }
+    Process {
+        id: emulatorMenuAction
+        command: ["/usr/bin/python3", root.sessionActionPath, "emulator-menu"]
+        stdout: SplitParser { onRead: line => {
+            try {
+                let msg = JSON.parse(line);
+                if (msg.type === "emulator-menu-result") {
+                    root.emulatorMenuResultReceived = true;
+                    root.emulatorMenuNotice = msg.ok ? "" : (msg.message || "Unable to open emulator menu.");
+                }
+            } catch (error) { console.warn(error); }
+        } }
+        stderr: SplitParser { onRead: line => console.warn(line) }
+        onExited: (code, status) => {
+            root.exitBusy = false;
+            if (!root.emulatorMenuResultReceived && !root.emulatorMenuNotice.length)
+                root.emulatorMenuNotice = "Emulator menu helper exited without acknowledging the action.";
+            if (root.emulatorMenuNotice.length) root.openMenu();
+        }
+    }
 
     function receive(line) {
         if (!line.startsWith("{")) return;
@@ -745,6 +798,11 @@ ShellRoot {
                     storeResultReceived = false;
                     storeNotice = "";
                     storeAction.running = true;
+                } else if (pendingEmulatorMenu) {
+                    pendingEmulatorMenu = false;
+                    exitBusy = true;
+                    emulatorMenuResultReceived = false;
+                    emulatorMenuAction.running = true;
                 }
             }
         } else if (message.type === "ready") {
@@ -752,6 +810,8 @@ ShellRoot {
             if (!opening || closing || !bridge.running) return;
             displaySupported = message.display === true;
             foreground = message.foreground;
+            if (foreground === "game" && root.sessionActionPath.length > 0
+                    && !emulatorMenuCapability.running) emulatorMenuCapability.running = true;
             storefrontId = message.storefront || "";
             storeGeneration = message.storeGeneration || "0";
             storeGame = message.storeGame === true;
@@ -808,6 +868,10 @@ ShellRoot {
             if (root.pendingStoreAction !== null) {
                 root.pendingStoreAction = null;
                 root.storeNotice = "The input helper stopped before restoring the menu lease. Reopen the menu to try again.";
+            }
+            if (root.pendingEmulatorMenu) {
+                root.pendingEmulatorMenu = false;
+                root.emulatorMenuNotice = "Input restoration failed; emulator menu was not opened.";
             }
             root.helperIdle = false;
             if (exitCode !== 0) console.error("Preview helper exited with code " + exitCode);
@@ -1079,7 +1143,7 @@ ShellRoot {
                             : root.page === "notification-settings" ? "Popup preferences and Steam notices."
                             : root.page === "settings" ? "Devices, connections and personalization."
                             : root.page === "power" ? "Shutdown and reboot require confirmation."
-                            : (root.storeNotice.length ? root.storeNotice : root.storeGame ? "Resume your game or close Steam and its game." : root.storefrontId.length ? "Your storefront is running." : root.foreground === "game" ? "Your game is still running." : "Your library is waiting.")
+                            : ((root.emulatorMenuNotice || root.storeNotice).length ? (root.emulatorMenuNotice || root.storeNotice) : root.storeGame ? "Resume your game or close Steam and its game." : root.storefrontId.length ? "Your storefront is running." : root.foreground === "game" ? "Your game is still running." : "Your library is waiting.")
                         color: "#BBC6D3"
                         font.pixelSize: root.px(15)
                     }

@@ -161,10 +161,12 @@ def main():
     lock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         is_store = len(sys.argv) in (5, 6) and sys.argv[1] == 'storefront'
-        if not is_store and (len(sys.argv) != 2 or sys.argv[1] not in ('exit-game', 'reboot', 'shutdown')):
-            raise RuntimeError('Expected exit-game, reboot or shutdown.')
+        is_emulator = len(sys.argv) == 2 and sys.argv[1] in ('emulator-menu', 'emulator-menu-capability')
+        if not is_store and not is_emulator and (len(sys.argv) != 2 or sys.argv[1] not in ('exit-game', 'reboot', 'shutdown')):
+            raise RuntimeError('Expected exit-game, emulator-menu, emulator-menu-capability, reboot or shutdown.')
         runtime = os.environ['XDG_RUNTIME_DIR']
-        lock.bind('\0zaman-menu-exit:' + runtime)
+        if sys.argv[1] != 'emulator-menu-capability':
+            lock.bind('\0zaman-menu-exit:' + runtime)
         import gi
         gi.require_version('Gio', '2.0')
         from gi.repository import Gio, GLib
@@ -191,6 +193,12 @@ def main():
                 emit('store-result', ok=True, message='')
             else:
                 storefront_action(call, *sys.argv[2:])
+        elif sys.argv[1] == 'emulator-menu-capability':
+            emit('emulator-menu-capability', available=bool(call('EmulatorMenuAvailable', '(b)')[0]))
+        elif sys.argv[1] == 'emulator-menu':
+            # sessiond owns emulator registry, focus validation and injection.
+            call('EmulatorMenu', '()')
+            emit('emulator-menu-result', ok=True, message='')
         elif sys.argv[1] == 'exit-game':
             exit_game(call)
         else:
@@ -201,7 +209,11 @@ def main():
         if 'the Zaman system menu is not open' in message:
             message = 'Sessiond needs the included ExitGame API update. Build and deploy it, then try again.'
         log('failed: ' + message.replace('\n', ' '))
-        emit('store-result' if len(sys.argv) > 1 and sys.argv[1] == 'storefront' else 'exit-result', ok=False, message=message)
+        kind = ('store-result' if len(sys.argv) > 1 and sys.argv[1] == 'storefront'
+                else 'emulator-menu-capability' if len(sys.argv) > 1 and sys.argv[1] == 'emulator-menu-capability'
+                else 'emulator-menu-result' if len(sys.argv) > 1 and sys.argv[1] == 'emulator-menu'
+                else 'exit-result')
+        emit(kind, ok=False, available=False, message=message)
         return 1
     finally:
         lock.close()
