@@ -80,11 +80,11 @@ Item {
                     required property int index
                     width: (parent.width - keyboard.px(36)) / 10
                     height: keyboard.px(48); radius: keyboard.px(8)
-                    color: keyboard.selected === index ? "#E7BE89" : "#273141"
+                    color: keyboard.selected === index ? "#2E3947" : "#202936"; border.width: keyboard.selected === index ? 2 : 1; border.color: keyboard.selected === index ? "#EAC28D" : "#3D4B5C"
                     MenuText {
                         anchors.centerIn: parent; text: modelData
                         font.pixelSize: keyboard.px(20)
-                        color: keyboard.selected === index ? "#211E1B" : "#ECEEF1"
+                        color: keyboard.selected === index ? "#F3EEE5" : "#ECEEF1"
                     }
                     MouseArea { anchors.fill: parent; onClicked: { keyboard.selected = index; keyboard.activate(); } }
                 }
@@ -99,11 +99,11 @@ Item {
                     required property int index
                     width: (parent.width - keyboard.px(4 * (keyboard.actions.length - 1))) / keyboard.actions.length
                     height: keyboard.px(48); radius: keyboard.px(8)
-                    color: keyboard.selected === 40 + index ? "#E7BE89" : "#273141"
+                    color: keyboard.selected === 40 + index ? "#2E3947" : "#202936"; border.width: keyboard.selected === 40 + index ? 2 : 1; border.color: keyboard.selected === 40 + index ? "#EAC28D" : "#3D4B5C"
                     MenuText {
                         anchors.centerIn: parent; text: modelData
                         font.pixelSize: keyboard.px(15)
-                        color: keyboard.selected === 40 + index ? "#211E1B" : "#ECEEF1"
+                        color: keyboard.selected === 40 + index ? "#F3EEE5" : "#ECEEF1"
                     }
                     MouseArea { anchors.fill: parent; onClicked: { keyboard.selected = 40 + index; keyboard.activate(); } }
                 }

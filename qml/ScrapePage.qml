@@ -3,6 +3,7 @@ import QtQml.Models
 
 Item {
     id: page
+    property bool focusVisible: true
     property real uiScale: 1
     property var snapshot: ({available:false,folders:[],jobs:[]})
     property bool available: false
@@ -44,7 +45,7 @@ Item {
         if (view === "clear") return [{id:"keep",label:"Keep history",action:"activity",kind:"primary"},{id:"clear",label:"Clear history",action:"confirm-clear"}];
         if (view === "cancel") return [{id:"keep",label:"Keep updating",action:"back-job",kind:"primary"},{id:"stop",label:"Stop update",action:"cancel-job"}];
         if (view === "log" || view === "answer") return [];
-        if (view === "activity") return jobs.map(j => ({id:j.id,label:collectionNames(j.folders),detail:j.stage,job:j.id,phase:j.phase,action:"job"})).concat([{id:"back",label:"Back to Artwork & Game Info",action:"setup",kind:"quiet"}]);
+        if (view === "activity") return jobs.map(j => ({id:j.id,label:collectionNames(j.folders),detail:j.stage,job:j.id,phase:j.phase,action:"job"})).concat(canClear ? [{id:"clear-history-action",label:"Clear history…",action:"clear-history",kind:"quiet"}] : []).concat([{id:"back",label:"Back to Artwork & Game Info",action:"setup",kind:"quiet"}]); // Zaman explicit artwork-history action
         if (view === "job") {
             var result=[];
             if (prompt && prompt.choices && prompt.choices.length) result = prompt.choices.map(c => ({id:"answer-"+c.value,label:c.label,detail:c.detail || "",action:"answer",value:c.value}));
@@ -133,6 +134,7 @@ Item {
         else if (row.action === "cancel") { view="cancel";selected=0; }
         else if (row.action === "cancel-job") { command({action:"scrape-cancel",id:jobId});view="job";selected=0; }
         else if (row.action === "retry") { knownJobs=jobs.map(j=>j.id);pendingStart=true;command({action:"scrape-retry",id:jobId}); }
+        else if (row.action === "clear-history") clear();
         else if (row.action === "confirm-clear") { command({action:"scrape-clear"});view="activity";selected=0; }
         else if (row.action === "back-job") { view="job";selected=0; }
         else if (row.action === "setup") { view="setup";selected=1; }
@@ -267,41 +269,39 @@ Item {
             ListView.onRemove: retiring = true
             transform: Translate { x: rowItem.dismissOffset }
             readonly property bool primary:modelData.kind === "primary"
-            readonly property bool chosen:index === page.selected
+            readonly property bool chosen:page.focusVisible && index === page.selected
             readonly property bool quiet:modelData.kind === "quiet" || modelData.kind === "options" || modelData.kind === "collection"
-            width:list.width;height:page.px(primary ? (page.view === "setup" ? 116 : 82) : (modelData.kind === "options" || modelData.kind === "collection") ? 63 : modelData.kind === "quiet" ? 52 : modelData.detail ? 90 : 66)
+            width:list.width;height:page.px(primary && page.view === "setup" ? 116 : 102)
             Rectangle {
                 objectName:"artworkSurface-" + modelData.id
                 width:parent.width;height:page.px(rowItem.primary ? 82 : rowItem.height/page.uiScale);radius:page.px(rowItem.quiet ? 8 : 13)
-                color:rowItem.chosen ? "#EAC28D" : rowItem.quiet ? "transparent" : "#1D2A3A"
-                border.width:rowItem.chosen ? page.px(2) : 0
-                border.color:rowItem.chosen ? "#F3D4A5" : "#3A4859"
+                color:rowItem.chosen ? "#2E3947" : "#202936"; border.width: rowItem.chosen ? 2 : 1; border.color: rowItem.chosen ? "#EAC28D" : "#3D4B5C"
                 opacity:modelData.disabled ? .45 : 1
                 Column {
                     x:page.px(17);anchors.verticalCenter:parent.verticalCenter;width:parent.width-page.px(62);spacing:page.px(6)
                     MenuText {
-                        visible:modelData.kind === "collection";text:"Collection";font.pixelSize:page.px(17);color:rowItem.chosen ? "#211E1B" : "#ECEEF1"
+                        visible:modelData.kind === "collection";text:"Collection";font.pixelSize:page.px(17);color:rowItem.chosen ? "#F3EEE5" : "#ECEEF1"
                     }
                     MenuText {
                         objectName:modelData.kind === "primary" ? "artworkPrimaryAction" : ""
                         width:parent.width;text:(modelData.checked ? "✓  " : "")+modelData.label;elide:Text.ElideRight
                         font.pixelSize:page.px(rowItem.primary ? 23 : modelData.kind === "collection" ? 14 : rowItem.quiet ? 17 : 20);font.bold:rowItem.primary
-                        color:rowItem.chosen ? (modelData.kind === "collection" ? "#473627" : "#211E1B") : modelData.kind === "collection" ? "#BBC6D3" : "#ECEEF1"
+                        color:rowItem.chosen ? (modelData.kind === "collection" ? "#BBC6D3" : "#F3EEE5") : modelData.kind === "collection" ? "#BBC6D3" : "#ECEEF1"
                     }
                     MenuText {
                         visible:!!modelData.detail && modelData.kind !== "collection";width:parent.width
-                        text:modelData.detail || "";elide:Text.ElideRight;font.pixelSize:page.px(14);color:rowItem.chosen ? "#473627" : "#BBC6D3"
+                        text:modelData.detail || "";elide:Text.ElideRight;font.pixelSize:page.px(16);color:rowItem.chosen ? "#BBC6D3" : "#BBC6D3"
                     }
                 }
                 MenuText {
                     anchors { right:parent.right;rightMargin:page.px(18);verticalCenter:parent.verticalCenter }
                     text:rowItem.primary ? "→" : modelData.kind === "collection" ? "⌄" : rowItem.quiet ? "›" : ""
-                    font.pixelSize:page.px(24);color:rowItem.chosen ? "#30271E" : "#BBC6D3"
+                    font.pixelSize:page.px(24);color:rowItem.chosen ? "#EAC28D" : "#BBC6D3"
                 }
             }
             MenuText {
                 visible:rowItem.primary && page.view === "setup";x:page.px(5);y:page.px(91);width:parent.width-page.px(10)
-                text:"Your games and saves stay untouched.";font.pixelSize:page.px(14);color:"#BBC6D3"
+                text:"Your games and saves stay untouched.";font.pixelSize:page.px(16);color:"#BBC6D3"
             }
             MouseArea { anchors.fill:parent;enabled:!rowItem.retiring;onClicked:{ page.selected=index;page.activate(); } }
         }
@@ -311,7 +311,7 @@ Item {
         anchors { left:parent.left;right:parent.right;top:header.bottom;bottom:parent.bottom;topMargin:page.px(16) }
         contentHeight:logText.height;clip:true
         MenuText {
-            id:logText;width:parent.width;wrapMode:Text.WrapAnywhere;font.pixelSize:page.px(15)
+            id:logText;width:parent.width;wrapMode:Text.WrapAnywhere;font.pixelSize:page.px(16)
             text:page.job ? (page.job.results || []).map(r=>r.folder+": "+(r.ok ? r.games+" games"+(r.missing ? ", "+r.missing+" without a match" : "") : r.error)).join("\n")+"\n\n"+page.job.log : ""
         }
     }

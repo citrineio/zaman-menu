@@ -14,11 +14,7 @@ Rectangle {
     width: Math.max(0, parent.width - 2 * x)
     height: Math.max(0, parent.height - 2 * y)
     radius: Math.round(13 * uiScale)
-    border.width: chosen ? 1 : 0
-    border.color: "#F4D2A4"
-    gradient: Gradient {
-        orientation: Gradient.Horizontal
-        GradientStop { position: 0; color: card.chosen ? "#EAC28D" : card.idleStart }
-        GradientStop { position: 1; color: card.chosen ? "#CB986C" : card.idleEnd }
-    }
+    color: chosen ? "#2E3947" : "#202936"
+    border.width: chosen ? 2 : 1
+    border.color: chosen ? "#EAC28D" : "#3D4B5C"
 }

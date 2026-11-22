@@ -3,6 +3,7 @@ import Quickshell.Networking
 
 Item {
     id: network
+    property bool focusVisible: true
     property real uiScale: 1
     property bool initialized: false
     property string view: "list"
@@ -13,6 +14,7 @@ Item {
     property WifiNetwork pendingNetwork: null
     property NetworkDevice pendingDevice: null
     property string operation: ""
+    property bool pendingPasswordProvided: false
     property bool expectedRadio: false
     property string notice: ""
     readonly property bool busy: operation !== ""
@@ -137,6 +139,11 @@ Item {
         var index = rows.findIndex(r => r.key === selectedKey);
         select(index >= 0 ? index : 0);
     }
+    function openRibbonRoot() {
+        if (view !== "list") changeView("list");
+        targetNetwork = null;
+        select(0);
+    }
     function back() {
         if (view === "password" || view === "forget") changeView(targetNetwork ? "detail" : "list");
         else if (view === "detail") { changeView("list"); targetNetwork = null; }
@@ -147,6 +154,7 @@ Item {
         operation = "";
         pendingNetwork = null;
         pendingDevice = null;
+        pendingPasswordProvided = false;
         notice = message;
     }
     function begin(kind, n, device) {
@@ -174,6 +182,13 @@ Item {
     function connectNetwork(password, withPassword) {
         var n = targetNetwork;
         if (!present(n) || busy || n.stateChanging || !Networking.wifiEnabled) return;
+        // New personal networks always prompt before asking NetworkManager to connect.
+        // Keep NoSecrets handling below for expired/wrong saved credentials.
+        if (!withPassword && !n.known && personal(n)) {
+            notice = "";
+            changeView("password");
+            return;
+        }
         if (withPassword) {
             if (!personal(n)) { notice = "This network requires a different authentication method."; return; }
             var valid = n.security === WifiSecurityType.Sae
@@ -185,6 +200,7 @@ Item {
             return;
         }
         if (!begin("connect", n, n.device)) return;
+        pendingPasswordProvided = withPassword;
         changeView("detail");
         // Always try stored credentials first unless the user explicitly edits them.
         if (withPassword) n.connectWithPsk(password);
@@ -286,7 +302,8 @@ Item {
             if (network.operation !== "connect") return;
             var n = network.pendingNetwork;
             if (reason === ConnectionFailReason.NoSecrets && network.personal(n) && network.present(n)) {
-                network.finish("Enter the Wi-Fi password and try again.");
+                var rejected = network.pendingPasswordProvided || n.known;
+                network.finish(rejected ? "Password was not accepted. Check it and try again." : "Enter the Wi-Fi password and try again.");
                 network.targetNetwork = n;
                 network.changeView("password");
             } else network.finish("Connection failed: " + ConnectionFailReason.toString(reason));
@@ -306,14 +323,14 @@ Item {
             width: parent.width; wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight
             text: !network.available ? "Network service is unavailable."
                 : network.view !== "list" && network.targetNetwork ? network.clean(network.targetNetwork.name) : network.connectionSummary
-            font.pixelSize: network.px(20); color: "#ECEEF1"
+            font.pixelSize: network.px(24); color: "#ECEEF1"
         }
         MenuText {
             width: parent.width; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
             text: network.view !== "list" && network.targetNetwork
                 ? (network.targetNetwork.connected ? "● Connected" : network.targetNetwork.stateChanging ? "Connection changing…" : "Not connected")
                 : network.internetSummary
-            font.pixelSize: network.px(15)
+            font.pixelSize: network.px(16)
             color: network.targetNetwork && network.targetNetwork.connected ? "#98D8AE" : "#BBC6D3"
         }
         MenuText {
@@ -324,7 +341,7 @@ Item {
                 : !network.wifiDevices.length ? "No Wi-Fi adapter is available."
                 : network.view === "list" && Networking.wifiEnabled && !network.networks.length ? "Looking for networks…" : "")
             visible: text.length > 0
-            font.pixelSize: network.px(14); color: "#D9BC96"
+            font.pixelSize: network.px(16); color: "#D9BC96"
         }
     }
     PasswordKeyboard {
@@ -345,28 +362,28 @@ Item {
             id: networkRow
             required property var modelData
             required property int index
-            width: networkList.width; baseHeight: 78
-            uiScale: network.uiScale; chosen: network.selected === index
+            width: networkList.width; baseHeight: 102; height: network.px(102)
+            uiScale: network.uiScale; chosen: network.focusVisible && network.selected === index
             onFocusSettled: if (networkRow.chosen) network.requestFocusSettle()
             MenuFocusBackground { chosen: networkRow.chosen; uiScale: network.uiScale; emphasis: networkRow.focusAmount }
             MenuIcon {
                 x: network.px(16); y: Math.round((parent.height - height) / 2)
                 width: network.px(28 + 2 * networkRow.focusAmount); height: width
                 name: networkRow.modelData.key === "back" || networkRow.modelData.key === "cancel" ? "back" : "network"
-                ink: networkRow.chosen ? "#30271E" : "#DEC09A"
+                ink: networkRow.chosen ? "#EAC28D" : "#DEC09A"
             }
             Column {
                 x: network.px(58); y: Math.round((parent.height - height) / 2)
                 width: parent.width - network.px(96); spacing: network.px(5)
                 MenuText {
                     width: parent.width; elide: Text.ElideRight; text: networkRow.modelData.title
-                    font.pixelSize: network.px(21 + 2 * networkRow.focusAmount)
-                    color: networkRow.chosen ? "#211E1B" : "#ECEEF1"
+                    font.pixelSize: network.px(24)
+                    color: networkRow.chosen ? "#F3EEE5" : "#ECEEF1"
                 }
                 MenuText {
                     width: parent.width; elide: Text.ElideRight; text: network.description(networkRow.modelData)
-                    font.pixelSize: network.px(14)
-                    color: networkRow.chosen ? "#473627" : networkRow.modelData.net && networkRow.modelData.net.connected ? "#98D8AE" : "#BBC6D3"
+                    font.pixelSize: network.px(16)
+                    color: networkRow.chosen ? "#BBC6D3" : networkRow.modelData.net && networkRow.modelData.net.connected ? "#98D8AE" : "#BBC6D3"
                 }
             }
             Rectangle {

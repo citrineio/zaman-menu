@@ -3,6 +3,7 @@ import QtQml.Models
 
 Item {
     id: page
+    property bool focusVisible: true
     property real uiScale: 1
     property var snapshot: ({jobs:[], systems:[], enabled:false})
     property bool available: false
@@ -21,7 +22,7 @@ Item {
     readonly property bool blocked: confirming || detail !== null
     readonly property bool canDismiss: available && !busy && !blocked && selected !== null && ["complete","failed","cancelled"].indexOf(selected.phase) >= 0
     readonly property bool canClear: available && !busy && !blocked && historyCount > 0
-    readonly property var rows: [{id:"receiver",name:snapshot.enabled ? "Stop receiving new transfers" : "Receive for 15 minutes"}].concat(jobs)
+    readonly property var rows: [{id:"receiver",name:snapshot.enabled ? "Stop receiving new transfers" : "Receive for 15 minutes"}].concat(jobs).concat(historyCount > 0 ? [{id:"clear-history-action",name:"Clear transfer history",phase:"action"}] : []) // Zaman explicit transfer-history action
     readonly property var choices: {
         if (!detail) return [];
         if (detailId === "history") return [{label:"Cancel",action:"back"},{label:"Clear history",action:"clear-history"}];
@@ -108,6 +109,7 @@ Item {
         return chosen ? "#244D53" : "#6FD5D1";
     }
     function stage(job) {
+        if (job.id === "clear-history-action") return "Review and confirm";
         var names = {offered:"Waiting for sender",receiving:"Receiving",validating:"Validating",
             "needs-destination":"Choose a destination folder","needs-files":"Needs attention",ready:"Ready to add to your library",
             "needs-scrape":"Finding artwork & info…",scraping:"Finding artwork & info…",
@@ -128,6 +130,7 @@ Item {
     function activate() {
         if (busy || !available) return;
         if (!detail) {
+            if (selectedId === "clear-history-action") { clear(); return; }
             if (selectedId === "receiver") command({action:snapshot.enabled ? "disable" : "enable"});
             else { detailId = selectedId; choice = 0; confirming = false; }
             return;
@@ -283,16 +286,16 @@ Item {
             property bool retiring: false
             ListView.onRemove: retiring = true
             transform: Translate { x: inboxRow.dismissOffset }
-            readonly property bool chosen: recordId === page.selectedId
+            readonly property bool chosen: page.focusVisible && recordId === page.selectedId
             readonly property bool actionRow: recordId === "receiver"
-            width:list.width; height:Math.max(page.px(actionRow ? 72 : 102), rowContent.implicitHeight + page.px(24)); radius:page.px(12)
-            color:chosen ? "#EAC28D" : "#1D2634"
+            width:list.width; height:Math.max(page.px(102), rowContent.implicitHeight + page.px(24)); radius:page.px(12)
+            color:chosen ? "#2E3947" : "#202936"; border.width: chosen ? 2 : 1; border.color: chosen ? "#EAC28D" : "#3D4B5C"
             Column {
                 id: rowContent
                 x:page.px(14); y:page.px(12); width:parent.width-page.px(28); spacing:page.px(6)
-                MenuText { width:parent.width; text:inboxRow.payload.name || ""; elide:Text.ElideRight; font.pixelSize:page.px(21); color:parent.parent.chosen ? "#211E1B" : "#ECEEF1" }
-                MenuText { objectName:"transferStage-" + inboxRow.recordId; visible:!inboxRow.actionRow; width:parent.width; text:inboxRow.actionRow ? "" : page.stage(inboxRow.payload); wrapMode:Text.WordWrap; font.pixelSize:page.px(16); color:parent.parent.chosen ? "#473627" : "#BBC6D3" }
-                MenuText { objectName:"transferHint-" + inboxRow.recordId; visible:!inboxRow.actionRow && text.length > 0; width:parent.width; text:inboxRow.actionRow ? "" : page.hint(inboxRow.payload); wrapMode:Text.WordWrap; font.pixelSize:page.px(16); color:inboxRow.chosen ? "#473627" : "#BBC6D3" }
+                MenuText { width:parent.width; text:inboxRow.payload.name || ""; elide:Text.ElideRight; font.pixelSize:page.px(24); color:parent.parent.chosen ? "#F3EEE5" : "#ECEEF1" }
+                MenuText { objectName:"transferStage-" + inboxRow.recordId; visible:!inboxRow.actionRow; width:parent.width; text:inboxRow.actionRow ? "" : page.stage(inboxRow.payload); wrapMode:Text.WordWrap; font.pixelSize:page.px(16); color:parent.parent.chosen ? "#BBC6D3" : "#BBC6D3" }
+                MenuText { objectName:"transferHint-" + inboxRow.recordId; visible:!inboxRow.actionRow && text.length > 0; width:parent.width; text:inboxRow.actionRow ? "" : page.hint(inboxRow.payload); wrapMode:Text.WordWrap; font.pixelSize:page.px(16); color:inboxRow.chosen ? "#BBC6D3" : "#BBC6D3" }
                 Rectangle {
                     id: rowTrack
                     objectName: "transferProgress-" + inboxRow.recordId
@@ -300,7 +303,7 @@ Item {
                     width: parent.width; height: page.px(8); radius: height / 2
                     readonly property real value: page.progress(inboxRow.payload)
                     readonly property bool indeterminate: page.working(inboxRow.payload)
-                    color: inboxRow.chosen ? "#AE8758" : "#394758"; clip: true
+                    color: inboxRow.chosen ? "#465A73" : "#394758"; clip: true
                     Rectangle {
                         id: rowFill
                         width: parent.width * (rowTrack.indeterminate ? .28 : rowTrack.value); height: parent.height; radius: height / 2
@@ -326,8 +329,8 @@ Item {
             required property var modelData
             required property int index
             width:options.width; height:page.px(64); radius:page.px(12)
-            color:index === page.choice ? "#EAC28D" : "#1D2634"
-            MenuText { anchors.centerIn:parent; width:parent.width-page.px(28); text:modelData.label; font.pixelSize:page.px(20); elide:Text.ElideRight; color:index === page.choice ? "#211E1B" : "#ECEEF1" }
+            color:index === page.choice ? "#2E3947" : "#202936"; border.width: index === page.choice ? 2 : 1; border.color: index === page.choice ? "#EAC28D" : "#3D4B5C"
+            MenuText { anchors.centerIn:parent; width:parent.width-page.px(28); text:modelData.label; font.pixelSize:page.px(24); elide:Text.ElideRight; color:index === page.choice ? "#F3EEE5" : "#ECEEF1" }
             MouseArea { anchors.fill:parent; onClicked:{ page.choice=index; page.activate(); } }
         }
     }

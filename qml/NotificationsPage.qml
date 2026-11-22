@@ -3,6 +3,7 @@ import QtQml.Models
 
 Item {
     id: page
+    property bool focusVisible: true
     signal openTransaction(string jobId)
     signal openTransfer()
     signal openScrape(string jobId)
@@ -146,16 +147,16 @@ Item {
             property bool retiring: false
             ListView.onRemove: retiring = true
             transform: Translate { x: notificationRow.dismissOffset }
-            readonly property bool chosen: recordId === page.selectedId
+            readonly property bool chosen: page.focusVisible && recordId === page.selectedId
             width: history.width
-            height: page.px(notificationRow.payload.transaction ? 122 : 96)
+            height: page.px(notificationRow.payload.transaction ? 122 : 102)
             radius: page.px(12)
-            color: notificationRow.chosen ? "#EAC28D" : "#1D2634"
+            color: notificationRow.chosen ? "#2E3947" : "#202936"; border.width: notificationRow.chosen ? 2 : 1; border.color: notificationRow.chosen ? "#EAC28D" : "#3D4B5C"
             MenuIcon {
                 x: page.px(14); y: page.px(20)
                 width: page.px(29); height: width
                 name: notificationRow.payload.category || "system"
-                ink: parent.chosen ? "#30271E" : "#DEC09A"
+                ink: parent.chosen ? "#EAC28D" : "#DEC09A"
             }
             Column {
                 x: page.px(58); y: page.px(12)
@@ -165,37 +166,37 @@ Item {
                     width: parent.width
                     objectName: "notification-title:" + notificationRow.recordId
                     text: notificationRow.payload.title || "Notification"
-                    font.pixelSize: page.px(22)
+                    font.pixelSize: page.px(24)
                     elide: Text.ElideRight
-                    color: notificationRow.chosen ? "#211E1B" : "#ECEEF1"
+                    color: notificationRow.chosen ? "#F3EEE5" : "#ECEEF1"
                 }
                 MenuText {
                     width: parent.width
                     text: notificationRow.payload.transaction ? notificationRow.payload.phase + " · " + notificationRow.payload.body : (notificationRow.payload.urgency === 2 ? "Critical · " : "") + page.stamp(notificationRow.payload) + (notificationRow.payload.source ? " · " + notificationRow.payload.source : "")
-                    font.pixelSize: page.px(14)
+                    font.pixelSize: page.px(16)
                     elide: Text.ElideRight
-                    color: notificationRow.chosen ? "#473627" : "#BBC6D3"
+                    color: notificationRow.chosen ? "#BBC6D3" : "#BBC6D3"
                 }
                 MenuText {
                     visible: notificationRow.payload.transaction === true
                     objectName: "notification-progress:" + notificationRow.recordId
                     width: parent.width
                     text: typeof notificationRow.payload.percent === "number" ? Math.round(notificationRow.payload.percent) + "% · current step" : "Waiting for progress…"
-                    font.pixelSize: page.px(14)
-                    color: notificationRow.chosen ? "#473627" : "#BBC6D3"
+                    font.pixelSize: page.px(16)
+                    color: notificationRow.chosen ? "#BBC6D3" : "#BBC6D3"
                 }
                 Rectangle {
                     id: progressTrack
                     visible: notificationRow.payload.transaction === true
                     width: parent.width; height: page.px(6); radius: height / 2
-                    color: notificationRow.chosen ? "#40503922" : "#35465C"
+                    color: notificationRow.chosen ? "#35465C" : "#35465C"
                     clip: true
                     Rectangle {
                         id: progressFill
                         readonly property bool determinate: typeof notificationRow.payload.percent === "number"
                         width: parent.width * (determinate ? Math.max(0, Math.min(100, notificationRow.payload.percent)) / 100 : .3)
                         height: parent.height; radius: height / 2
-                        color: notificationRow.chosen ? "#614930" : "#88A8C9"
+                        color: notificationRow.chosen ? "#EAC28D" : "#88A8C9"
                         NumberAnimation on x {
                             running: page.visible && notificationRow.payload.transaction === true && !progressFill.determinate
                             from: -progressFill.width; to: progressTrack.width
@@ -234,7 +235,7 @@ Item {
             spacing: page.px(18)
             MenuText { width:parent.width; text:page.detail ? page.detail.title : ""; wrapMode:Text.Wrap; font.pixelSize:page.px(28) }
             MenuText { width:parent.width; text:page.detail ? page.stamp(page.detail) + " · " + page.detail.source : ""; wrapMode:Text.Wrap; font.pixelSize:page.px(16); color:"#BBC6D3" }
-            MenuText { width:parent.width; text:page.detail ? page.detail.body : ""; wrapMode:Text.Wrap; font.pixelSize:page.px(21) }
+            MenuText { width:parent.width; text:page.detail ? page.detail.body : ""; wrapMode:Text.Wrap; font.pixelSize:page.px(24) }
             MenuText { visible:page.detail !== null && page.detail.target === "transfer-pending"; text:"Open Transfer to review pending files."; width:parent.width; wrapMode:Text.Wrap; font.pixelSize:page.px(18); color:"#DEC09A" }
         }
     }
@@ -242,7 +243,7 @@ Item {
         visible: page.confirming
         width: parent.width
         spacing: page.px(18)
-        MenuText { text:"Clear notification history?"; font.pixelSize:page.px(26) }
+        MenuText { width:parent.width; text:"Clear notification history?"; wrapMode:Text.Wrap; font.pixelSize:page.px(26) }
         MenuText { width:parent.width; text:"Downloads and pending imports will continue. New notifications will stay."; wrapMode:Text.WordWrap; color:"#BBC6D3"; font.pixelSize:page.px(18) }
         Repeater {
             model: ["Cancel", "Clear history"]
@@ -250,8 +251,8 @@ Item {
                 required property string modelData
                 required property int index
                 width: page.width; height:page.px(60); radius:page.px(12)
-                color:page.confirmSelected === index ? "#EAC28D" : "#1D2634"
-                MenuText { anchors.centerIn:parent; text:modelData; font.pixelSize:page.px(22); color:page.confirmSelected === index ? "#211E1B" : "#ECEEF1" }
+                color:page.focusVisible && page.confirmSelected === index ? "#2E3947" : "#202936"; border.width: page.focusVisible && page.confirmSelected === index ? 2 : 1; border.color: page.focusVisible && page.confirmSelected === index ? "#EAC28D" : "#3D4B5C"
+                MenuText { anchors.centerIn:parent; text:modelData; font.pixelSize:page.px(24); color:page.focusVisible && page.confirmSelected === index ? "#F3EEE5" : "#ECEEF1" }
                 MouseArea { anchors.fill:parent; onClicked:{ page.confirmSelected = index; page.activate(); } }
             }
         }

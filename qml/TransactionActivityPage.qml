@@ -24,12 +24,12 @@ Item {
             required property var modelData
             readonly property bool chosen: modelData.id === page.selectedId
             width: rows.width; height: page.px(103); radius: page.px(12)
-            color: chosen ? "#EAC28D" : "#1D2634"
+            color: chosen ? "#2E3947" : "#202936"; border.width: chosen ? 2 : 1; border.color: chosen ? "#EAC28D" : "#3D4B5C"
             Column {
                 x: page.px(14); y: page.px(12); width: parent.width - page.px(28); spacing: page.px(5)
-                MenuText { width: parent.width; text: modelData.name; font.pixelSize: page.px(22); color: chosen ? "#211E1B" : "#ECEEF1"; elide: Text.ElideRight }
-                MenuText { width: parent.width; text: (modelData.operation === "install" ? "Install · " : "Remove · ") + modelData.phase + (typeof modelData.percent === "number" ? " · " + modelData.percent + "%" : ""); color: chosen ? "#473627" : "#BBC6D3"; font.pixelSize: page.px(16); elide: Text.ElideRight }
-                MenuText { width: parent.width; text: modelData.stage; color: chosen ? "#473627" : "#BBC6D3"; font.pixelSize: page.px(14); elide: Text.ElideRight }
+                MenuText { width: parent.width; text: modelData.name; font.pixelSize: page.px(22); color: chosen ? "#F3EEE5" : "#ECEEF1"; elide: Text.ElideRight }
+                MenuText { width: parent.width; text: (modelData.operation === "install" ? "Install · " : "Remove · ") + modelData.phase + (typeof modelData.percent === "number" ? " · " + modelData.percent + "%" : ""); color: chosen ? "#BBC6D3" : "#BBC6D3"; font.pixelSize: page.px(16); elide: Text.ElideRight }
+                MenuText { width: parent.width; text: modelData.stage; color: chosen ? "#BBC6D3" : "#BBC6D3"; font.pixelSize: page.px(14); elide: Text.ElideRight }
             }
             MouseArea { anchors.fill: parent; onClicked: { page.selectedId = modelData.id; page.activate(); } }
         }
