@@ -69,6 +69,8 @@ Item {
             }
 
             switch (icon.name) {
+            case "storage":
+                box(3,5,18,14,2);line([[3,14],[21,14]],false);circle(17,17,.7,true);break;
             default:
             case "system":
             case "notifications":
@@ -117,6 +119,10 @@ Item {
                 box(3, 3, 7, 7, 1); box(14, 3, 7, 7, 1);
                 box(3, 14, 7, 7, 1); box(14, 14, 7, 7, 1);
                 break;
+            case "audio-muted":
+                line([[3,9],[7,9],[11,5],[11,19],[7,15],[3,15]], true);
+                line([[15,9],[21,15]], false); line([[21,9],[15,15]], false);
+                break;
             case "audio":
                 line([[3,9],[7,9],[11,5],[11,19],[7,15],[3,15]], true);
                 ctx.beginPath(); ctx.arc(13, 12, 4, -0.9, 0.9); ctx.stroke();
@@ -148,6 +154,7 @@ Item {
                 line([[6,11],[10,11]], false); line([[8,9],[8,13]], false);
                 circle(16,10,0.8,true); circle(18,12.5,0.8,true);
                 break;
+            case "advanced":
             case "settings":
                 var points = [];
                 for (var tooth = 0; tooth < 32; ++tooth) {

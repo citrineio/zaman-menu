@@ -3,6 +3,7 @@ import Quickshell.Services.Pipewire
 
 Item {
     id: audio
+    property bool focusVisible: true
     property bool active: false
     property real uiScale: 1
     property int selected: 0
@@ -248,12 +249,13 @@ Item {
             id: row
             required property var modelData
             required property int index
-            chosen: audio.selected === index
+            chosen: audio.focusVisible && audio.selected === index
             uiScale: audio.uiScale
             readonly property bool volumeRow: modelData.key === "volume"
             readonly property bool selector: volumeRow || modelData.key === "output"
             width: controls.width
-            baseHeight: volumeRow ? 118 : (modelData.key === "output" ? 96 : 72)
+            baseHeight: volumeRow ? 118 : 102
+            height: Math.max(audio.px(baseHeight), audioText.implicitHeight + audio.px(24))
             onFocusSettled: if (row.chosen) audio.requestFocusSettle()
             MenuFocusBackground {
                 chosen: row.chosen
@@ -266,23 +268,25 @@ Item {
                 x: audio.px(16); y: audio.px(18) + row.contentOffset
                 name: row.modelData.icon
                 width: audio.px(28 + 2 * row.focusAmount); height: width
-                ink: row.chosen ? "#30271E" : "#DEC09A"
+                ink: row.chosen ? "#EAC28D" : "#DEC09A"
             }
             Column {
-                x: audio.px(58); y: audio.px(14) + row.contentOffset
-                width: parent.width - audio.px(row.selector ? 144 : 78)
+                id: audioText
+                x: audio.px(58); anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(0, parent.width - audio.px(row.selector ? 144 : 78))
                 spacing: audio.px(3)
                 MenuText {
                     width: parent.width
+                    elide: Text.ElideRight
                     text: row.modelData.label
-                    font.pixelSize: audio.px(22 + 2 * row.focusAmount)
-                    color: row.chosen ? "#211E1B" : "#ECEEF1"
+                    font.pixelSize: audio.px(24)
+                    color: row.chosen ? "#F3EEE5" : "#ECEEF1"
                 }
                 MenuText {
                     width: parent.width; elide: Text.ElideRight
                     text: row.modelData.detail
-                    font.pixelSize: audio.px(13)
-                    color: row.chosen ? "#473627" : "#BBC6D3"
+                    font.pixelSize: audio.px(16)
+                    color: row.chosen ? "#BBC6D3" : "#BBC6D3"
                 }
                 MenuChoiceValue {
                     visible: row.modelData.key === "output"
@@ -292,20 +296,20 @@ Item {
                         + (audio.candidate() === audio.sink ? " · Active" : " · Not applied")
                         : "No playback outputs available"
                     fontSize: audio.px(15)
-                    color: row.chosen ? "#30271E" : "#C7CFD8"
+                    color: row.chosen ? "#EAC28D" : "#C7CFD8"
                 }
                 Item {
                     visible: row.volumeRow
                     width: parent.width; height: audio.px(36)
                     Rectangle {
                         y: audio.px(17)
-                        width: parent.width - audio.px(100); height: audio.px(6); radius: height / 2
-                        color: row.chosen ? "#38594333" : "#34465A73"
+                        width: Math.max(0, parent.width - audio.px(100)); height: audio.px(6); radius: height / 2
+                        color: row.chosen ? "#465A73" : "#34465A73"
                         Rectangle {
                             width: parent.width * Math.min(100, Math.max(0, audio.displayedPercent)) / 100
                             height: parent.height; radius: parent.radius
                             Behavior on width { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
-                            color: row.chosen ? "#59402A" : "#DAB991"
+                            color: row.chosen ? "#EAC28D" : "#DAB991"
                         }
                     }
                     MenuChoiceValue {
@@ -314,7 +318,7 @@ Item {
                         direction: audio.changeDirection; uiScale: audio.uiScale
                         y: audio.px(5)
                         text: audio.hasLevel ? audio.displayedPercent + "%" + (audio.muted ? " · Muted" : "") : "—"
-                        color: row.chosen ? "#30271E" : "#DAB991"
+                        color: row.chosen ? "#EAC28D" : "#DAB991"
                         fontSize: audio.px(audio.muted ? 15 : 21)
                     }
                 }

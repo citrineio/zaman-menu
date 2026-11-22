@@ -11,9 +11,9 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: Math.round(8 * hint.uiScale)
-        color: hint.editing ? (hint.chosen ? "#2859402A" : "#203F6487") : "transparent"
-        border.width: hint.editing ? 1 : 0
-        border.color: hint.chosen ? "#80614930" : "#607FA6C9"
+        color: hint.chosen ? "#2E3947" : "#202936"
+        border.width: 1
+        border.color: hint.chosen ? "#EAC28D" : "#3D4B5C"
     }
     Repeater {
         model: [-1, 1]
@@ -25,7 +25,7 @@ Item {
                 anchors.centerIn: parent
                 text: modelData < 0 ? "‹" : "›"
                 font.pixelSize: Math.round(24 * hint.uiScale)
-                color: hint.chosen ? "#59402A" : "#BCCDDD"
+                color: hint.chosen ? "#EAC28D" : "#BCCDDD"
             }
             MouseArea { anchors.fill: parent; onClicked: hint.stepped(modelData) }
         }

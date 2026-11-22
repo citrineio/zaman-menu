@@ -5,7 +5,41 @@ import Quickshell.Bluetooth
 
 Item {
     id: bluetooth
+    property bool focusVisible: true
     property real uiScale: 1
+    property bool controllersOnly: false
+    property var controllerStatus: []
+    property bool showOtherDevices: false
+    property bool controllerCommandReceived: false
+    property string controllerCommandError: ""
+    function isController(d) {
+        return !!d && (d.icon === "input-gaming" || controllerStatus.some(item => item.id === d.dbusPath));
+    }
+    function statusFor(d) { return d ? controllerStatus.find(s => s.id === d.dbusPath) : null; }
+    function controllerReady(d) { var s = statusFor(d); return !!s && s.inputReady && d.connected; }
+    function openController(path) {
+        for (var a = 0; a < adapters.length; ++a) {
+            var d = adapters[a].devices.values.find(item => item.dbusPath === path);
+            if (d) { selectedAdapter = adapters[a]; device = d; changeView("detail"); return; }
+        }
+        notice = "Controller is no longer available."; changeView("list");
+    }
+    function controllerAction(kind, d) {
+        if (!present(d) || !begin(kind === "connect" ? "controller-connect" : kind, d)) return;
+        controllerCommandReceived = false; controllerCommandError = "";
+        controllerCommand.exec(["/usr/bin/python3", Quickshell.shellPath("../tools/zaman-controller-inventory.py"), kind, d.dbusPath, d.address]);
+    }
+    function receiveControllerResult(text) {
+        var result;
+        try { result = JSON.parse(text); } catch (error) { return; }
+        if (result.type !== "controller-operation" || !pendingDevice
+                || String(result.address).toLowerCase() !== String(pendingDevice.address).toLowerCase()) return;
+        controllerCommandReceived = true;
+        if (!result.ok) { finish(String(result.error || "Controller operation failed.").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 600)); return; }
+        if (operation === "controller-connect") notice = "Bluetooth connected. Waiting for controller input…";
+        settle();
+    }
+    onControllerStatusChanged: if (initialized) settle()
     property bool initialized: false
     property BluetoothAdapter selectedAdapter: null
     readonly property BluetoothAdapter adapter: {
@@ -34,10 +68,11 @@ Item {
     property bool pairReported: false
     readonly property string pairHelper: Quickshell.env("ZAMAN_MENU_DEV_PAIR") || ""
     readonly property bool pairing: pairProcess.running || operation === "pair"
-    readonly property bool busy: operation !== "" || pairProcess.running
+    readonly property bool busy: operation !== "" || pairProcess.running || controllerCommand.running
     readonly property bool editingCode: prompt !== null && (prompt.kind === "pin" || prompt.kind === "passkey")
     readonly property var adapters: Bluetooth.adapters.values
     readonly property var devices: adapter ? adapter.devices.values : []
+    readonly property int connectedCount: devices.filter(device => device.connected).length
     readonly property var rows: makeRows()
     signal backRequested()
     signal navigationReset()
@@ -74,7 +109,7 @@ Item {
         if (view === "confirm") return [row("cancel", "Cancel", "Keep the current settings"),
             row("confirm", confirmation === "power" ? "Turn Bluetooth off" : confirmation === "forget" ? "Forget device" : "Disconnect device", "Apply this change")];
         if (pairing) return [row("cancel-pair", pairCanceled ? "Canceling…" : "Cancel pairing", "Wait for pairing to stop")];
-        if (view === "detail" && device) {
+        if (view === "detail" && device && (!controllersOnly || isController(device) || showOtherDevices)) {
             var result = [];
             if (device.blocked) result.push(row("unblock", "Unblock device", "Allow this device to connect"));
             else if (!device.paired && !device.bonded) result.push(row("pair", "Pair and connect", "Put the device in pairing mode first"));
@@ -83,7 +118,7 @@ Item {
                 result.push(row("trust", "Automatic reconnection", device.trusted ? "Allowed · Select to disable" : "Not allowed · Select to allow"));
                 result.push(row("forget", "Forget device", "Remove the saved pairing"));
             }
-            result.push(row("back", "Back", "Return to Bluetooth devices"));
+            result.push(row("back", "Back", controllersOnly ? "Return to controllers" : "Return to Bluetooth devices"));
             return result;
         }
         var result = [];
@@ -91,14 +126,15 @@ Item {
         if (adapter) {
             result.push(row("power", "Bluetooth", BluetoothAdapterState.toString(adapter.state)));
             if (adapter.enabled) {
-                result.push(row("scan", scanAdapter ? (scanStopRequested ? "Waiting for search to stop…" : "Stop searching") : "Find devices", scanAdapter ? "Searching for up to 30 seconds" : "Put your controller or accessory in pairing mode"));
+                result.push(row("scan", scanAdapter ? (scanStopRequested ? "Waiting for search to stop…" : "Stop searching") : (controllersOnly ? "Find controllers" : "Find devices"), scanAdapter ? "Searching for up to 30 seconds" : controllersOnly ? "Put your controller in pairing mode" : "Put your accessory in pairing mode"));
                 var sorted = devices.slice().sort((a, b) => a.dbusPath.localeCompare(b.dbusPath));
                 for (var i = 0; i < sorted.length; ++i) {
                     var d = sorted[i];
-                    if (showNearby || d.paired || d.bonded || d.connected) result.push(row(d.dbusPath, deviceName(d), "", d));
+                    if ((controllersOnly ? isController(d) || showOtherDevices : !isController(d)) && (showNearby || d.paired || d.bonded || d.connected)) result.push(row(d.dbusPath, deviceName(d), "", d));
                 }
             }
         }
+        if (controllersOnly && adapter && adapter.enabled) result.push(row("show-other", showOtherDevices ? "Show controllers only" : "Controller not listed?", "Show other devices if this controller does not report its type"));
         result.push(row("back", "Back", "Return to Settings"));
         return result;
     }
@@ -132,7 +168,8 @@ Item {
         // StartDiscovery may still be in flight. Keep the target until its
         // discovering signal arrives so a quick Back cannot strand that scan.
         scanStopRequested = true;
-        if (held.discovering) { held.discovering = false; scanAdapter = null; scanStopRequested = false; }
+        if (held.discovering) { held.discovering = false; return; }
+        scanAdapter = null; scanStopRequested = false;
     }
     function scan() {
         if (scanAdapter) { stopScan(); return; }
@@ -173,7 +210,8 @@ Item {
             finish("Saved pairing removed."); return;
         }
         if (!present(pendingDevice)) { finish("The selected device is unavailable."); return; }
-        if (operation === "connect" && pendingDevice.state === BluetoothDeviceState.Connected) finish("Connected.");
+        if (operation === "controller-connect" && controllerCommandReceived && controllerReady(pendingDevice)) finish("Connected · Controller input detected.");
+        else if (operation === "connect" && pendingDevice.state === BluetoothDeviceState.Connected) finish("Connected.");
         else if (operation === "disconnect" && pendingDevice.state === BluetoothDeviceState.Disconnected) finish("Disconnected.");
         else if (operation === "trust" && pendingDevice.trusted === expected) finish("Reconnection preference updated.");
         else if (operation === "unblock" && !pendingDevice.blocked) finish("Device unblocked.");
@@ -182,6 +220,13 @@ Item {
     function startPair() {
         if (!present(device) || busy || device.pairing || !adapter.enabled) return;
         if (!pairHelper) { notice = "Pairing is unavailable in this preview. Build the supplied pairing helper first."; return; }
+        if (controllersOnly && scanAdapter) {
+            pendingDevice = device; pendingPath = device.dbusPath;
+            operation = "stop-controller-scan"; deadline.restart(); stopScan();
+            notice = "Finishing search before pairing…";
+            if (!scanAdapter) Qt.callLater(() => bluetooth.resumeControllerPair());
+            return;
+        }
         stopScan();
         pendingDevice = device;
         pendingPath = device.dbusPath;
@@ -194,6 +239,13 @@ Item {
         navigationReset();
         pairProcess.running = true;
     }
+    function resumeControllerPair() {
+        if (operation !== "stop-controller-scan" || scanAdapter) return;
+        var d = pendingDevice;
+        finish(""); device = d;
+        if (present(d) && visible) startPair();
+    }
+    onScanAdapterChanged: if (controllersOnly && !scanAdapter && operation === "stop-controller-scan") Qt.callLater(() => bluetooth.resumeControllerPair())
     function cancelPair() {
         if (!pairing || pairCanceled) return;
         pairCanceled = true;
@@ -226,6 +278,8 @@ Item {
     }
     function back() {
         if (pairing) { cancelPair(); return; }
+        if (operation === "stop-controller-scan") { finish("Pairing canceled."); return; }
+        if (busy) { notice = "Wait for the current controller operation to finish."; return; }
         if (view === "confirm") changeView(device ? "detail" : "list");
         else if (view === "detail") { changeView("list"); device = null; }
         else { stopScan(); backRequested(); }
@@ -239,6 +293,7 @@ Item {
             if (begin("power", null)) { adapter.enabled = false; settle(); }
         } else if (present(device)) {
             var d = device;
+            if (controllersOnly) { controllerAction(action, d); return; }
             if (begin(action, d)) {
                 if (action === "forget") d.forget();
                 else d.disconnect();
@@ -261,6 +316,7 @@ Item {
             selectedAdapter = adapters[(adapters.indexOf(adapter) + 1) % adapters.length];
             return;
         }
+        if (item.key === "show-other") { showOtherDevices = !showOtherDevices; return; }
         if (!adapter) return;
         if (item.key === "power") {
             if (adapter.state === BluetoothAdapterState.Blocked) { notice = "Bluetooth is blocked by hardware."; return; }
@@ -273,7 +329,7 @@ Item {
             }
             if (item.key === "pair") startPair();
             else if (item.key === "disconnect" || item.key === "forget") { confirmation = item.key; changeView("confirm"); }
-            else if (item.key === "connect") { if (begin("connect", device)) { device.connect(); settle(); } }
+            else if (item.key === "connect") { if (controllersOnly) controllerAction("connect", device); else if (begin("connect", device)) { device.connect(); settle(); } }
             else if (item.key === "trust") { expected = !device.trusted; if (begin("trust", device)) { device.trusted = expected; settle(); } }
             else if (item.key === "unblock") { if (begin("unblock", device)) { device.blocked = false; settle(); } }
         }
@@ -287,7 +343,7 @@ Item {
         else if (!(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) codeKeys.append(event.text);
         return true;
     }
-    function shutdown() { stopScan(); cancelPair(); codeKeys.reset(); }
+    function shutdown() { stopScan(); cancelPair(); if (operation === "stop-controller-scan") finish("Pairing canceled."); codeKeys.reset(); }
     onRowsChanged: if (initialized) {
         var index = rows.findIndex(r => r.key === selectedKey);
         select(index >= 0 ? index : 0);
@@ -327,9 +383,19 @@ Item {
             if (success && bluetooth.present(d) && bluetooth.adapter && bluetooth.adapter.enabled && bluetooth.visible) {
                 bluetooth.device = d;
                 bluetooth.changeView("detail");
-                if (d.connected) bluetooth.notice = "Paired and connected.";
+                if (bluetooth.controllersOnly) bluetooth.controllerAction("connect", d);
+                else if (d.connected) bluetooth.notice = "Paired and connected.";
                 else if (bluetooth.begin("connect", d)) { d.connect(); bluetooth.settle(); }
             } else if (success) bluetooth.notice = "Paired. Open the device again to connect.";
+        }
+    }
+    Process {
+        id: controllerCommand
+        stdout: StdioCollector { onStreamFinished: bluetooth.receiveControllerResult(text) }
+        stderr: StdioCollector { onStreamFinished: bluetooth.controllerCommandError = text.trim().slice(-800) }
+        onExited: (code, status) => {
+            if (!bluetooth.controllerCommandReceived && bluetooth.operation.length)
+                bluetooth.finish(bluetooth.controllerCommandError || "Controller helper returned no result (exit " + code + ").");
         }
     }
     Timer {
@@ -342,7 +408,7 @@ Item {
     }
     Timer { interval: 1000; running: pairProcess.running; repeat: true; onTriggered: pairProcess.write(JSON.stringify({action: "heartbeat"}) + "\n") }
     Timer { id: scanDeadline; interval: 30000; onTriggered: { bluetooth.stopScan(); bluetooth.notice = "Search finished. Select Find devices to search again."; } }
-    Timer { id: deadline; interval: 20000; onTriggered: { bluetooth.settle(); if (bluetooth.operation) bluetooth.finish("The change was not confirmed. Check the device and try again."); } }
+    Timer { id: deadline; interval: bluetooth.controllersOnly ? 45000 : 20000; onTriggered: { bluetooth.settle(); if (bluetooth.operation) bluetooth.finish(bluetooth.operation === "controller-connect" ? "Pairing is saved, but controller input was not detected. Check that the controller is awake; the pairing was kept." : "The change was not confirmed. Check the device and try again."); } }
     Connections {
         target: bluetooth.pendingDevice
         function onStateChanged() { bluetooth.settle(); }
@@ -378,7 +444,7 @@ Item {
         MenuText {
             width: parent.width; wrapMode: Text.WordWrap
             text: bluetooth.device ? bluetooth.deviceStatus(bluetooth.device) + " · " + bluetooth.device.address
-                : bluetooth.adapter ? BluetoothAdapterState.toString(bluetooth.adapter.state) : "Return to Settings and try again."
+                : bluetooth.adapter ? BluetoothAdapterState.toString(bluetooth.adapter.state) + " · " + bluetooth.connectedCount + " connected" : "Return to Settings and try again."
             font.pixelSize: bluetooth.px(14); color: bluetooth.device && bluetooth.device.connected ? "#98D8AE" : "#BBC6D3"
         }
         MenuText {
@@ -392,7 +458,7 @@ Item {
                     : bluetooth.confirmation === "forget" ? "This removes the saved pairing and disconnects the device." : "This disconnects the selected device.")
                     + " If it is your controller or keyboard, use another input device to reconnect it."
                 : bluetooth.notice || (bluetooth.pairing ? "Pairing… Follow any instructions on the other device."
-                    : bluetooth.busy ? "Applying change…" : bluetooth.showNearby ? "Known and discovered devices. A device may no longer be nearby." : "Select Find devices to pair a new controller or accessory.")
+                    : bluetooth.busy ? "Applying change…" : bluetooth.showNearby ? "Known and discovered devices. A device may no longer be nearby." : bluetooth.controllersOnly ? "Put the controller into Bluetooth pairing mode, then select Find controllers. Use Controller not listed? if its type is not reported." : "Select Find devices to pair a Bluetooth accessory. Controllers are managed in Settings → Controllers.")
             font.pixelSize: bluetooth.px(15); color: "#D9BC96"
         }
         MenuText {
@@ -424,26 +490,26 @@ Item {
             id: deviceRow
             required property var modelData
             required property int index
-            width: deviceList.width; baseHeight: 78; uiScale: bluetooth.uiScale; chosen: bluetooth.selected === index
+            width: deviceList.width; baseHeight: 102; height: bluetooth.px(102); uiScale: bluetooth.uiScale; chosen: bluetooth.focusVisible && bluetooth.selected === index
             onFocusSettled: if (deviceRow.chosen) bluetooth.requestFocusSettle()
             MenuFocusBackground { chosen: deviceRow.chosen; uiScale: bluetooth.uiScale; emphasis: deviceRow.focusAmount }
             MenuIcon {
                 x: bluetooth.px(16); y: Math.round((parent.height - height) / 2)
                 name: deviceRow.modelData.key === "back" || deviceRow.modelData.key === "cancel" ? "back" : "bluetooth"
                 width: bluetooth.px(28 + 2 * deviceRow.focusAmount); height: width
-                ink: deviceRow.chosen ? "#30271E" : "#DEC09A"
+                ink: deviceRow.chosen ? "#EAC28D" : "#DEC09A"
             }
             Column {
                 x: bluetooth.px(58); y: Math.round((parent.height - height) / 2)
                 width: parent.width - bluetooth.px(96); spacing: bluetooth.px(5)
                 MenuText {
                     width: parent.width; elide: Text.ElideRight; text: deviceRow.modelData.title
-                    font.pixelSize: bluetooth.px(21 + 2 * deviceRow.focusAmount); color: deviceRow.chosen ? "#211E1B" : "#ECEEF1"
+                    font.pixelSize: bluetooth.px(24); color: deviceRow.chosen ? "#F3EEE5" : "#ECEEF1"
                 }
                 MenuText {
                     width: parent.width; elide: Text.ElideRight
                     text: deviceRow.modelData.target ? bluetooth.deviceStatus(deviceRow.modelData.target) : deviceRow.modelData.detail
-                    font.pixelSize: bluetooth.px(14); color: deviceRow.chosen ? "#473627" : "#BBC6D3"
+                    font.pixelSize: bluetooth.px(16); color: deviceRow.chosen ? "#BBC6D3" : "#BBC6D3"
                 }
             }
             Rectangle {

@@ -6,6 +6,8 @@ Rectangle {
     property real uiScale:1
     property bool entered:false
     property bool closing:false
+    readonly property bool soundMuted: (record.category === "audio" && record.state === "muted")
+        || /^sound muted[.!]?$/i.test(String(record.title || "").trim())
     readonly property bool connectedSuccess: ["input", "network", "bluetooth"].indexOf(record.category) >= 0
         && (record.state === "connected" || (record.category === "bluetooth" && record.state === "enabled"))
     readonly property bool installSuccess: record.category === "install" && record.state === "installed"
@@ -22,7 +24,7 @@ Rectangle {
     }
     Component.onCompleted: entered = true
     Rectangle { x:0; y:12 * card.uiScale; width:3 * card.uiScale; height:parent.height - 24 * card.uiScale; radius:2; color:card.accent }
-    MenuIcon { x:16 * card.uiScale; y:20 * card.uiScale; width:28 * card.uiScale; height:width; name:card.record.category; ink:card.accent }
+    MenuIcon { x:16 * card.uiScale; y:20 * card.uiScale; width:28 * card.uiScale; height:width; name:card.soundMuted ? "audio-muted" : card.record.category; ink:card.accent }
     Column {
         x:58 * card.uiScale; y:14 * card.uiScale
         width:card.width - 74 * card.uiScale

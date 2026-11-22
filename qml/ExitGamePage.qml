@@ -2,6 +2,7 @@ import QtQuick
 
 Item {
     id: exitPage
+    property bool focusVisible: true
     property string prompt: "Exit this game?"
     property string detail: "Close the current game and return to your library."
     property string cancelLabel: "Keep playing"
@@ -49,17 +50,18 @@ Item {
             delegate: Rectangle {
                 required property int index
                 required property string modelData
-                width: exitPage.width; height: exitPage.px(64)
+                width: exitPage.width; height: exitPage.px(102)
                 radius: exitPage.px(13)
-                readonly property bool highlighted: exitPage.selected === index
-                color: highlighted ? "#EAC28D" : "#213349"
-                border.width: 1; border.color: highlighted ? "#E8C498" : "#355C718C"
+                readonly property bool highlighted: exitPage.focusVisible && exitPage.selected === index
+                color: highlighted ? "#2E3947" : "#202936"; border.width: highlighted ? 2 : 1; border.color: highlighted ? "#EAC28D" : "#3D4B5C"
                 opacity: exitPage.busy ? 0.45 : 1
                 MenuText {
                     anchors.centerIn: parent
+                    width: parent.width - exitPage.px(28)
+                    horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
                     text: modelData
-                    font.pixelSize: exitPage.px(22)
-                    color: parent.highlighted ? "#29221C" : "#E9EDF2"
+                    font.pixelSize: exitPage.px(24)
+                    color: parent.highlighted ? "#F3EEE5" : "#E9EDF2"
                 }
                 MouseArea {
                     anchors.fill: parent; enabled: exitPage.active && !exitPage.busy

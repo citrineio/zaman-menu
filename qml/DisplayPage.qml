@@ -2,6 +2,7 @@ import QtQuick
 
 Item {
     id: display
+    property bool focusVisible: true
     property real uiScale: 1
     property bool active: false
     property bool helperReady: false
@@ -255,10 +256,10 @@ Item {
             id: row
             required property var modelData
             required property int index
-            chosen: display.selected === index
+            chosen: display.focusVisible && display.selected === index
             uiScale: display.uiScale
             width: displayList.width
-            baseHeight: 76
+            baseHeight: 102; height: display.px(102)
             readonly property bool selector: ["output", "resolution", "refresh"].indexOf(modelData.key) >= 0
             readonly property bool enabledRow: modelData.key === "back" || modelData.key === "revert" || (!display.busy
                 && (modelData.key !== "preview" || display.changed)
@@ -269,7 +270,7 @@ Item {
                 x: display.px(16); y: Math.round((parent.height - height) / 2)
                 name: row.modelData.key === "back" || row.modelData.key === "revert" ? "back" : "display"
                 width: display.px(28 + 2 * row.focusAmount); height: width
-                ink: row.chosen ? "#30271E" : "#DEC09A"
+                ink: row.chosen ? "#EAC28D" : "#DEC09A"
             }
             Column {
                 x: display.px(58); y: Math.round((parent.height - height) / 2)
@@ -280,9 +281,9 @@ Item {
                 MenuText {
                     width: parent.width; elide: Text.ElideRight
                     text: row.modelData.label
-                    font.pixelSize: display.px(21 + 2 * row.focusAmount)
+                    font.pixelSize: display.px(24)
                     color: row.chosen
-                        ? (row.enabledRow ? "#211E1B" : "#433527")
+                        ? (row.enabledRow ? "#F3EEE5" : "#AEBAC8")
                         : (row.enabledRow ? "#ECEEF1" : "#AEBAC8")
                 }
                 MenuChoiceValue {
@@ -294,7 +295,7 @@ Item {
                     direction: display.changeDirection
                     animate: row.selector
                     uiScale: display.uiScale
-                    fontSize: display.px(14); color: row.chosen ? "#473627" : "#BBC6D3"
+                    fontSize: display.px(14); color: row.chosen ? "#BBC6D3" : "#BBC6D3"
                 }
             }
             MouseArea {
