@@ -193,7 +193,7 @@ ShellRoot {
     readonly property bool canOpenSystem: !shortcutBlocked && !pegasusLibraryTool && !(page === "advanced" && advancedPage.confirming)
     readonly property bool hasHistoryDismiss: page === "transfer" || page === "scrape"
     readonly property var railEntries: [
-        {key:"actions",label:foreground === "game" ? "Game" : "Library",icon:"resume"},
+        {key:"actions",label:storefrontId.length ? (storefrontId === "steam" ? "Steam" : "Dukkan") : foreground === "game" ? "Game" : "Library",icon:foreground === "game" && !storefrontId.length ? "resume" : "library"},
         {key:"audio",label:"Audio",icon:"audio"},
         {key:"controllers",label:"Controllers",icon:"controllers"},
         {key:"network",label:"Network",icon:"network"},
@@ -224,7 +224,19 @@ ShellRoot {
         && !(page === "network" && networkPageLoader.item && networkPageLoader.item.view === "forget")
     readonly property bool contentHasFocus: chromeZone === "content"
     readonly property bool quickHasExit: foreground === "game" && !storefrontId.length
-    onQuickHasExitChanged: if (!quickHasExit && quickIndex === 7) quickIndex = 0
+    readonly property bool quickHasStoreClose: storefrontId.length > 0 && (!storeGame || storefrontId === "steam")
+    readonly property bool quickHasStorefronts: foreground === "library" && !storefrontId.length
+    readonly property bool quickHasStoreHome: storefrontId.length > 0 && !storeGame
+    readonly property var quickTopSecondary: quickHasExit
+        ? {key:"exit",label:"Exit Game",icon:"exit"}
+        : quickHasStoreClose
+        ? {key:"store-close",label:"Exit " + (storefrontId === "steam" ? "Steam" : "Dukkan"),icon:"exit"}
+        : quickHasStorefronts
+        ? {key:"storefronts",label:"Storefronts",icon:"storefronts"}
+        : null
+    readonly property bool quickHasTopSecondary: quickTopSecondary !== null
+    onQuickHasTopSecondaryChanged: if (!quickHasTopSecondary && quickIndex === 7) quickIndex = 0
+    onQuickHasStoreHomeChanged: if (!quickHasStoreHome && quickIndex === 8) quickIndex = 0
     readonly property var quickEntries: [
         mainEntries[0],
         {key:"quick-volume",label:"Volume"},
@@ -233,12 +245,13 @@ ShellRoot {
         {key:"quick-output",label:"Sound through"},
         {key:"display",label:"Display"},
         {key:"controllers",label:"Controllers"}
-    ].concat(quickHasExit ? [{key:"exit",label:"Exit Game"}] : [])
+    ].concat(quickHasTopSecondary ? [quickTopSecondary] : [])
+     .concat(quickHasStoreHome ? [{key:"store-home",label:"Hide " + (storefrontId === "steam" ? "Steam" : "Dukkan")}] : [])
     readonly property string quickScreenName: overlay.screen ? overlay.screen.name : ""
     readonly property string quickNetwork: liveStatus.networkTitle
     readonly property string quickNetworkDetail: liveStatus.networkDetail
     readonly property string chromeTitle: page === "notifications" ? "Notifications"
-        : page === "appearance" ? "Menu style" : page === "actions" ? (menuStyle === "ribbon" && storefrontId.length
+        : page === "appearance" ? "Menu style" : page === "actions" ? (storefrontId.length
             ? (storefrontId === "steam" ? "Steam options" : "Dukkan options")
             : foreground === "game" ? "Game options" : "Library options")
         : page === "settings" ? (menuStyle === "split" ? "More settings" : "System settings") : page === "notification-settings" ? "Notification settings"
@@ -321,13 +334,27 @@ ShellRoot {
         if (key === "quick-output") { openQuickOutput(); return; }
         var entry = settingsEntries.concat(mainEntries).concat([{key:"actions",label:foreground === "game" ? "Game options" : "Library options"},{key:"settings",label:"System settings"}]).find(e => e.key === key);
         if (!entry || entry.disabled) return;
-        if (key === "exit" && menuStyle === "drawer" && chromeHome) {
+        if ((key === "exit" || key === "store-close") && menuStyle === "drawer" && chromeHome) {
             styleDirect = false;
             returnPage = "";
             pageEntry = entry;
             exitNotice = "";
             chromeZone = "content";
-            page = "exit";
+            page = key;
+            return;
+        }
+        if (key === "storefronts" && menuStyle === "drawer" && chromeHome) {
+            styleDirect = true;
+            returnPage = "";
+            pageEntry = entry;
+            chromeZone = "content";
+            page = "storefronts";
+            select(0);
+            requestFocusSettle();
+            return;
+        }
+        if (key === "store-home" && menuStyle === "drawer" && chromeHome) {
+            queueStoreAction("home", storefrontId, storeGeneration);
             return;
         }
         if (["emulator-menu","store-home","store-close","exit"].indexOf(key) >= 0) {
@@ -443,10 +470,16 @@ ShellRoot {
                 return true;
             }
             stopQuickVolumeRepeat();
-            var nextIndex = quickIndex === 7 ? 1 : Math.max(0, Math.min(6, quickIndex + direction));
+            var nextIndex;
+            if (quickIndex === 0 || quickIndex === 7) nextIndex = direction > 0 ? (quickHasStoreHome ? 8 : 1) : 0;
+            else if (quickIndex === 8) nextIndex = direction < 0 ? 0 : 1;
+            else if (quickIndex === 1 && direction < 0) nextIndex = quickHasStoreHome ? 8 : 0;
             // The two tiles occupy one vertical stop.
-            if (quickIndex === 2 || quickIndex === 3) nextIndex = direction < 0 ? 1 : 4;
-            else if (nextIndex === 2 || nextIndex === 3) nextIndex = quickTile;
+            else if (quickIndex === 2 || quickIndex === 3) nextIndex = direction < 0 ? 1 : 4;
+            else {
+                nextIndex = Math.max(0, Math.min(6, quickIndex + direction));
+                if (nextIndex === 2 || nextIndex === 3) nextIndex = quickTile;
+            }
             focusQuick(nextIndex);
             return true;
         }
@@ -470,7 +503,7 @@ ShellRoot {
                 audioController.select(0); audioController.horizontal(event,value);
             } else if (value > 0.5 && !wasDown) {
                 if (quickIndex === 2 || quickIndex === 3) focusQuick(left ? 2 : 3);
-                else if (quickHasExit && (quickIndex === 0 || quickIndex === 7)) focusQuick(left ? 0 : 7);
+                else if (quickHasTopSecondary && (quickIndex === 0 || quickIndex === 7)) focusQuick(left ? 0 : 7);
             }
             return true;
         }
@@ -500,9 +533,11 @@ ShellRoot {
         return false;
     }
     function chromeBack() {
-        if (menuStyle === "drawer" && page === "exit" && returnPage === "") {
+        if (menuStyle === "drawer" && returnPage === ""
+                && (page === "exit" || page === "store-close" || (page === "storefronts" && styleDirect))) {
+            styleDirect = false;
             page = "";
-            focusQuick(quickHasExit ? 7 : 0);
+            focusQuick(quickHasTopSecondary ? 7 : 0);
             return true;
         }
         if (page === "settings" && settingsReturn) {
@@ -571,7 +606,7 @@ ShellRoot {
         notificationReturn = null;
         closeQuickOutput();
         if (menuStyle === "split") railIndex = railEntries.findIndex(entry => entry.key === "settings");
-        var fromGameDrawer = menuStyle === "drawer" && chromeHome && quickHasExit;
+        var fromGameDrawer = menuStyle === "drawer" && chromeHome && (quickHasExit || quickHasStoreClose);
         if (menuStyle === "ribbon") ribbonIndex = ribbonEntries.findIndex(entry => entry.key === "settings");
         showStyleCategory("settings", true);
         select(fromGameDrawer || menuStyle === "ribbon" ? 0 : settingsSelected);
@@ -821,8 +856,8 @@ ShellRoot {
     ].concat(foreground === "game" && !storefrontId.length && emulatorMenuAvailable ? [
         { label: "Emulator Menu", key: "emulator-menu", detail: "Open the emulator's native menu and save controls" },
     ] : []).concat(foreground === "library" ? [
-        { label: "Manage Games", key: "manage-games", detail: "Delete ROMs or uninstall storefront games", disabled: storefrontId.length > 0 || storeGame },
-        { label: "Storefronts", key: "storefronts", detail: "Dukkan and Steam" }
+        { label: "Storefronts", key: "storefronts", detail: "Dukkan and Steam" },
+        { label: "Manage Games", key: "manage-games", detail: "Delete ROMs or uninstall storefront games", disabled: storefrontId.length > 0 || storeGame }
     ] : []).concat(storefrontId.length && !storeGame ? [
         { label: "Return to library", key: "store-home", detail: "Keep the storefront running in the background" }
     ] : []).concat(storefrontId.length && (!storeGame || storefrontId === "steam") ? [
@@ -834,8 +869,8 @@ ShellRoot {
         { label: "Dukkan", key: "store-dukkan", detail: "Browse and install games" },
         { label: "Steam", key: "store-steam", detail: "Open your Steam library and store" }
     ]
-    readonly property var settingsEntries: (foreground === "game" ? [
-        {label:"Game options", key:"actions", detail:quickHasExit ? "Resume, exit and emulator controls" : "Resume or close the active storefront"}
+    readonly property var settingsEntries: (foreground === "game" || storefrontId.length ? [
+        {label:storefrontId.length ? (storefrontId === "steam" ? "Steam options" : "Dukkan options") : "Game options", key:"actions", detail:quickHasExit ? "Resume, exit and emulator controls" : "Resume, hide or close the active storefront"}
     ] : []).concat([
         { label: "Controllers", key: "controllers", detail: "Pair controllers, manage connections and saved pairings" },
         { label: "Audio", key: "audio", detail: "Volume and audio output" },
@@ -845,7 +880,7 @@ ShellRoot {
         { label: "Notifications", key: "notification-settings", detail: "Background progress and popup preferences" },
         { label: "Appearance", key: "appearance", detail: "Theme, colors and interface style" },
         { label: "Storage", key: "storage", detail: "Devices, capacity and available space" },
-    ], foreground !== "game" ? [
+    ], foreground !== "game" && !storefrontId.length ? [
         {label:"Library options", key:"actions", detail:"Resume, storefronts and game actions"}
     ] : [], [
         { label: "Advanced", key: "advanced", detail: "Frontend restart and theme refresh" },

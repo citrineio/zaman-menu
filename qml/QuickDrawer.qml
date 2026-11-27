@@ -12,13 +12,17 @@ Item {
     readonly property real scaleFactor: Math.min(controller.uiScale, width / 500)
     readonly property int gutter: px(36)
     readonly property bool hasExit: controller.quickHasExit
+    readonly property bool hasTopSecondary: controller.quickHasTopSecondary
+    readonly property var topSecondaryEntry: controller.quickTopSecondary
+    readonly property bool hasStoreHome: controller.quickHasStoreHome
+    readonly property string storefrontName: controller.storefrontId === "steam" ? "Steam" : "Dukkan"
     property string displayStatus: "Reading…"
 
     function px(value) { return Math.round(scaleFactor * value); }
     function ensure(index) {
         Qt.callLater(function() {
             if (!drawer.visible || drawer.controller.quickIndex !== index) return;
-            var target = [resume, volume, network, bluetooth, output, displayRow, players, exitGame][index];
+            var target = [resume, volume, network, bluetooth, output, displayRow, players, topSecondary, hideStore][index];
             if (index === 4 && drawer.controller.quickOutputOpen) {
                 var at = drawer.audio.outputs.indexOf(drawer.controller.quickOutputNode);
                 target = outputs.itemAt(at) || output;
@@ -196,17 +200,53 @@ Item {
                 ActionCard {
                     id: resume
                     entry: 0
-                    width: drawer.hasExit ? Math.floor((parent.width - parent.spacing) / 2) : parent.width
-                    label: drawer.hasExit ? "Resume game" : drawer.controller.quickEntries[0].label
+                    width: drawer.hasTopSecondary ? Math.floor((parent.width - parent.spacing) / 2) : parent.width
+                    label: drawer.hasExit ? "Resume game"
+                        : drawer.controller.storefrontId ? "Resume " + drawer.storefrontName
+                        : drawer.hasTopSecondary ? "Library"
+                        : drawer.controller.quickEntries[0].label
                     icon: drawer.controller.foreground === "game" || drawer.controller.storefrontId ? "resume" : "library"
                 }
                 ActionCard {
-                    id: exitGame
-                    visible: drawer.hasExit
+                    id: topSecondary
+                    visible: drawer.hasTopSecondary
                     entry: 7
                     width: parent.width - parent.spacing - resume.width
-                    label: "Exit Game"
-                    icon: "exit"
+                    label: drawer.topSecondaryEntry ? drawer.topSecondaryEntry.label : ""
+                    icon: drawer.topSecondaryEntry ? drawer.topSecondaryEntry.icon : "exit"
+                }
+            }
+
+            ControlSurface {
+                id: hideStore
+                visible: drawer.hasStoreHome
+                entry: 8
+                width: parent.width
+                height: drawer.px(68)
+                accessibleLabel: "Hide " + drawer.storefrontName + ", return to library and keep running"
+                MenuIcon {
+                    x: drawer.px(17)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: drawer.px(24); height: width
+                    name: "store-home"; ink: drawer.gold
+                }
+                Column {
+                    x: drawer.px(52)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - x - drawer.px(17)
+                    spacing: drawer.px(2)
+                    MenuText {
+                        width: parent.width
+                        text: "Hide " + drawer.storefrontName
+                        color: drawer.ink; font.pixelSize: drawer.px(21)
+                        elide: Text.ElideRight
+                    }
+                    MenuText {
+                        width: parent.width
+                        text: "Return to library · Keep running in background"
+                        color: drawer.muted; font.pixelSize: drawer.px(15)
+                        elide: Text.ElideRight
+                    }
                 }
             }
 
